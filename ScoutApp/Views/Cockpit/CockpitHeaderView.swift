@@ -189,6 +189,7 @@ struct CockpitHeaderView: View {
 
     @ViewBuilder
     private var captureButton: some View {
+#if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             Button(action: workspace.toggleCapture) {
                 captureButtonLabel
@@ -198,14 +199,21 @@ struct CockpitHeaderView: View {
             .tint(ScoutColors.mint.opacity(0.72))
             .captureButtonAccessibility(workspace.captureState)
         } else {
-            Button(action: workspace.toggleCapture) {
-                captureButtonLabel
-                    .foregroundStyle(ScoutColors.canvas)
-                    .background(ScoutColors.mint, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .captureButtonAccessibility(workspace.captureState)
+            fallbackCaptureButton
         }
+#else
+        fallbackCaptureButton
+#endif
+    }
+
+    private var fallbackCaptureButton: some View {
+        Button(action: workspace.toggleCapture) {
+            captureButtonLabel
+                .foregroundStyle(ScoutColors.canvas)
+                .background(ScoutColors.mint, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .captureButtonAccessibility(workspace.captureState)
     }
 
     private var captureButtonLabel: some View {
