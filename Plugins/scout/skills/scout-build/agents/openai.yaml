@@ -1,0 +1,6 @@
+interface:
+  display_name: "Build from Scout"
+  short_description: "Build from trusted Scout discovery context"
+  default_prompt: "Use $scout-build to turn an approved Scout session into an evidence-grounded implementation plan."
+policy:
+  allow_implicit_invocation: true

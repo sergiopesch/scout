@@ -1,0 +1,36 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { PublicError } from "../src/errors.js";
+import { sanitizeRealtimeClientEvent } from "../src/realtime-proxy.js";
+
+test("session updates are constrained to Scout transcription settings", () => {
+  const result = JSON.parse(sanitizeRealtimeClientEvent(JSON.stringify({
+    type: "session.update",
+    session: {
+      type: "transcription",
+      audio: {
+        input: {
+          format: { type: "audio/pcm", rate: 24_000 },
+          transcription: { model: "client-model", language: "en", delay: "minimal" },
+        },
+      },
+    },
+  }), "gpt-realtime-whisper")) as any;
+
+  assert.equal(result.session.audio.input.transcription.model, "gpt-realtime-whisper");
+  assert.equal(result.session.audio.input.transcription.language, "en");
+  assert.equal(result.session.audio.input.turn_detection, null);
+  assert.equal(result.session.audio.input.noise_reduction.type, "far_field");
+});
+
+test("audio events are accepted while unrestricted realtime events are rejected", () => {
+  const audio = Buffer.from([0, 1, 2, 3]).toString("base64");
+  assert.equal(
+    JSON.parse(sanitizeRealtimeClientEvent(JSON.stringify({ type: "input_audio_buffer.append", audio }), "model")).type,
+    "input_audio_buffer.append",
+  );
+  assert.throws(
+    () => sanitizeRealtimeClientEvent(JSON.stringify({ type: "response.create" }), "model"),
+    (error: unknown) => error instanceof PublicError && error.code === "realtime_event_not_allowed",
+  );
+});

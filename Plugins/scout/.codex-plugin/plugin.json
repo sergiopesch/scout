@@ -1,0 +1,29 @@
+{
+  "name": "scout",
+  "version": "0.1.0",
+  "description": "Turn approved Scout discovery context into evidence-grounded software delivery with Codex.",
+  "author": {
+    "name": "Scout"
+  },
+  "license": "MIT",
+  "keywords": ["discovery", "forward-deployed", "evidence", "architecture", "codex"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Scout",
+    "shortDescription": "Build from trusted customer discovery",
+    "longDescription": "Scout gives Codex an approved, evidence-linked customer model, unresolved questions, constraints, and acceptance criteria without dumping raw meeting transcripts.",
+    "developerName": "Scout",
+    "category": "Developer Tools",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "Inspect this Scout session and propose the right build.",
+      "Turn the approved Scout POC into an implementation plan.",
+      "Show the evidence behind these Scout requirements."
+    ],
+    "brandColor": "#5B6CFF",
+    "composerIcon": "./assets/composer-icon.png",
+    "logo": "./assets/logo.png",
+    "logoDark": "./assets/logo.png"
+  },
+  "mcpServers": "./.mcp.json"
+}

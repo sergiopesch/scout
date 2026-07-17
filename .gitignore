@@ -1,0 +1,34 @@
+.DS_Store
+
+# Local credentials and machine configuration
+.env
+.env.*
+!.env.example
+
+# Xcode and SwiftPM output
+DerivedData/
+.build/
+.swiftpm/
+Scout.xcodeproj/
+*.xcuserstate
+xcuserdata/
+*.profraw
+
+# Node tooling
+Gateway/node_modules/
+Gateway/coverage/
+Gateway/dist/
+Gateway/context-packs/
+Gateway/.mcp-stdio-test-*/
+
+# Release output
+dist/
+
+# Runtime evidence and exports are customer data
+.scout/
+Exports/
+Recordings/
+
+# Tool caches
+.xcodegen-cache/
+.eslintcache

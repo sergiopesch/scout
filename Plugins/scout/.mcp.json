@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "scout": {
+      "command": "node",
+      "args": ["./mcp/scout-mcp.cjs"],
+      "cwd": "."
+    }
+  }
+}

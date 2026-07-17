@@ -1,0 +1,15 @@
+name: Security report guidance
+description: Do not disclose vulnerabilities in a public issue.
+title: "Security report — use private channel"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Stop here for suspected vulnerabilities. Follow SECURITY.md and use GitHub private vulnerability reporting when enabled. Do not include exploit details, credentials, customer evidence, or context packs in a public issue.
+  - type: checkboxes
+    id: acknowledgement
+    attributes:
+      label: Acknowledgement
+      options:
+        - label: I will use the private reporting channel described in SECURITY.md.
+          required: true

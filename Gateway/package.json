@@ -1,0 +1,41 @@
+{
+  "name": "@scout/gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Trusted OpenAI relay and read-only MCP surface for Scout.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.build.json && npm run bundle:mcp && npm run bundle:runtime",
+    "bundle:mcp": "esbuild src/mcp-stdio.ts --bundle --platform=node --format=cjs --target=node22 --legal-comments=external --minify-whitespace --outfile=../Plugins/scout/mcp/scout-mcp.cjs && node ../Scripts/normalize-generated-bundle.mjs",
+    "bundle:runtime": "esbuild src/main.ts --bundle --platform=node --format=cjs --target=node22 --legal-comments=external --outfile=dist/scout-gateway.cjs",
+    "start": "node dist/main.js",
+    "mcp": "tsx src/mcp-stdio.ts",
+    "mcp:built": "node dist/mcp-stdio.js",
+    "pretest": "npm run bundle:mcp",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run typecheck && npm test",
+    "test:live": "tsx test/live-smoke.ts",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "busboy": "1.6.0",
+    "dotenv": "17.2.3",
+    "openai": "6.45.0",
+    "ws": "8.21.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/busboy": "1.5.4",
+    "@types/node": "22.19.15",
+    "@types/ws": "8.18.1",
+    "esbuild": "0.28.1",
+    "tsx": "4.23.0",
+    "typescript": "5.9.3"
+  }
+}
