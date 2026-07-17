@@ -31,7 +31,7 @@ const buildNumber = process.env.SCOUT_BUILD_NUMBER ?? "1";
 const mode = process.argv.includes("--notarize") ? "notarize" : "adhoc";
 const identity = mode === "notarize" ? process.env.SCOUT_SIGNING_IDENTITY : "-";
 const notaryProfile = process.env.SCOUT_NOTARY_PROFILE;
-const nodeSource = process.env.SCOUT_RELEASE_NODE ?? process.execPath;
+const nodeSource = process.env.SCOUT_RELEASE_NODE;
 const nodeLicense = process.env.SCOUT_NODE_LICENSE_PATH;
 const outputRoot = join(workspace, "dist", `Scout-${version}`);
 const app = join(outputRoot, "Scout.app");
@@ -139,6 +139,11 @@ if (mode === "notarize") {
 }
 
 if (process.arch !== "arm64") throw new Error(`Scout macOS packaging requires an arm64 host process; observed ${process.arch}`);
+if (!nodeSource) {
+  throw new Error(
+    "SCOUT_RELEASE_NODE is required and must point to a verified, self-contained arm64 Node binary; see docs/release.md",
+  );
+}
 const nodeArchitectures = await assertSelfContainedNode(nodeSource);
 const nodeVersion = (await run(nodeSource, ["--version"])).stdout.trim();
 await rm(outputRoot, { recursive: true, force: true });
