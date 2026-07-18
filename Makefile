@@ -64,7 +64,7 @@ release-lint:
 	node --check Scripts/package-release.mjs
 	node Scripts/verify-action-pins.mjs
 	node Scripts/generate-gateway-third-party-licenses.mjs --check
-	ruby -e 'require "yaml"; ARGV.each { |file| YAML.load_file(file, aliases: true) }' .github/workflows/ci.yml .github/workflows/secrets.yml .github/ISSUE_TEMPLATE/config.yml
+	ruby -e 'require "yaml"; ARGV.each { |file| YAML.load_file(file) }' .github/workflows/ci.yml .github/workflows/secrets.yml .github/ISSUE_TEMPLATE/config.yml
 
 app-test: generate
 	mkdir -p .build
