@@ -25,7 +25,7 @@ The current verified suite counts are:
 | Gateway | 28 |
 | Launcher JavaScript | 7 |
 | Launcher native security-policy harness | 4 cases |
-| macOS Scout app | 122 |
+| macOS Scout app | 123 |
 
 There were no failed, skipped, cancelled, or expected-failure app tests. The macOS coverage report
 after the consolidated gate measured 72.42% line coverage (14,971 of 20,672 lines). Coverage is a

@@ -47,7 +47,7 @@ The repository contains a production-shaped macOS slice, not a hosted multi-tena
   failures stay visible even in compact/detached layouts, and archive navigation asks the authoritative
   live coordinator to cancel startup or stop and drain active capture before publishing a paused state.
 - The current source gate passes 80 Core, 21 persistence, 28 Gateway, 7 launcher-script, native
-  launcher-policy, and 122 macOS app tests. The app coverage report is approximately 72%.
+  launcher-policy, and 123 macOS app tests. The app coverage report is approximately 72%.
 - An earlier ad-hoc ZIP/DMG, packaged peer/auth smoke, and real OpenAI two-speaker synthetic smoke
   passed on Apple silicon. That artifact predates the current audit fixes and is historical evidence,
   not a current release certification.

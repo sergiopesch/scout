@@ -1,5 +1,59 @@
 import SwiftUI
 
+struct SessionSidebarOperationalStatus: Equatable {
+    enum Tone: Equatable {
+        case coral
+        case gold
+        case mint
+        case blue
+
+        var color: Color {
+            switch self {
+            case .coral: ScoutColors.coral
+            case .gold: ScoutColors.gold
+            case .mint: ScoutColors.mint
+            case .blue: ScoutColors.blue
+            }
+        }
+    }
+
+    let title: String
+    let detail: String
+    let tone: Tone
+    let pulses: Bool
+
+    var accessibilityLabel: String {
+        "\(title). \(detail)"
+    }
+
+    @MainActor
+    init(workspace: ScoutWorkspace) {
+        pulses = workspace.captureState == .listening && !workspace.isDemoWorkspace
+
+        if workspace.liveError != nil {
+            title = "Attention required"
+            detail = "Review the capture warning in the workspace"
+            tone = .coral
+        } else if workspace.isCaptureTransitioning {
+            title = "Capture changing state"
+            detail = "Waiting for capture services to finish safely"
+            tone = .gold
+        } else if workspace.isDemoWorkspace {
+            title = "Fictional demo"
+            detail = "No customer capture is active"
+            tone = .gold
+        } else if workspace.captureState == .listening {
+            title = "Capture active"
+            detail = "Audio capture and local journal are active"
+            tone = .mint
+        } else {
+            title = "Local workspace ready"
+            detail = "Capture starts only on explicit request"
+            tone = .blue
+        }
+    }
+}
+
 struct SessionSidebarView: View {
     @Bindable var workspace: ScoutWorkspace
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -101,14 +155,14 @@ struct SessionSidebarView: View {
     private var engineStatus: some View {
         HStack(spacing: 9) {
             StatusDot(
-                color: operationalStatusColor,
-                pulses: workspace.captureState == .listening
+                color: operationalStatus.tone.color,
+                pulses: operationalStatus.pulses
             )
             VStack(alignment: .leading, spacing: 1) {
-                Text(operationalStatusTitle)
+                Text(operationalStatus.title)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(ScoutColors.primaryText)
-                Text(operationalStatusDetail)
+                Text(operationalStatus.detail)
                     .font(.system(size: 9))
                     .foregroundStyle(ScoutColors.secondaryText)
             }
@@ -119,31 +173,11 @@ struct SessionSidebarView: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(ScoutColors.stroke, lineWidth: 1))
         .padding(12)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(operationalStatusTitle). \(operationalStatusDetail)")
+        .accessibilityLabel(operationalStatus.accessibilityLabel)
     }
 
-    private var operationalStatusTitle: String {
-        if workspace.liveError != nil { return "Attention required" }
-        if workspace.isCaptureTransitioning { return "Capture changing state" }
-        if workspace.captureState == .listening { return "Capture active" }
-        if workspace.isDemoWorkspace { return "Fictional demo" }
-        return "Local workspace ready"
-    }
-
-    private var operationalStatusDetail: String {
-        if workspace.liveError != nil { return "Review the capture warning in the workspace" }
-        if workspace.isCaptureTransitioning { return "Waiting for capture services to finish safely" }
-        if workspace.captureState == .listening { return "Audio capture and local journal are active" }
-        if workspace.isDemoWorkspace { return "No customer capture is active" }
-        return "Capture starts only on explicit request"
-    }
-
-    private var operationalStatusColor: Color {
-        if workspace.liveError != nil { return ScoutColors.coral }
-        if workspace.isCaptureTransitioning { return ScoutColors.gold }
-        if workspace.captureState == .listening { return ScoutColors.mint }
-        if workspace.isDemoWorkspace { return ScoutColors.gold }
-        return ScoutColors.blue
+    private var operationalStatus: SessionSidebarOperationalStatus {
+        SessionSidebarOperationalStatus(workspace: workspace)
     }
 }
 
