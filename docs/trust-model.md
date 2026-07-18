@@ -1,56 +1,86 @@
 # Trust is a product surface
 
-Scout earns trust by making its epistemic state visible and correctable while the customer is still in the room.
+Scout earns trust only when the state shown to an operator matches the state the deterministic domain
+model can validate and replay. This document separates the current contract from the intended product
+direction so that future-facing UX copy is not mistaken for an implemented guarantee.
 
-## Independent dimensions
+## Implemented trust contract
 
-Scout never compresses trust into one opaque score. Each claim carries:
+Each canonical claim currently records:
 
-- **Mode:** explicit, inferred, proposed, imported, or manually entered.
-- **Validation:** unreviewed, confirmed, disputed, superseded, rejected, or retracted.
-- **Confidence:** capture/model certainty in integer basis points; never a truth score.
-- **Evidence availability:** available, offline, removed by policy, or corrupt.
-- **Speaker resolution:** resolved participant, candidate, or anonymous track.
-- **Conflict state:** none, contested, or resolved.
+- **Origin:** heard, observed, inferred, suggested, confirmed, or corrected.
+- **Validation:** unreviewed, needs validation, validated, disputed, or rejected.
+- **Confidence:** capture or model certainty in integer basis points; never a truth score.
+- **Rationale:** an optional explanation for the trust assessment.
+- **Lifecycle:** proposed, accepted, rejected, or superseded.
+- **Provenance:** zero or more evidence identifiers and an optional asserted-by speaker identifier.
 
-## Deterministic customer-facing labels
+The reducer and command-authorisation boundary enforce the combinations that can be committed by each
+actor. Model projections enter as suggested proposals, bind to a recorded model-call receipt, and may
+not manufacture human confirmation. Accepting or rejecting a claim or visual observation requires a
+fresh device-owner review capability for that exact, still-current decision. Legacy terminal reviews
+remain replayable but are visibly unauthenticated until separately attested.
 
-Labels are a projection of those dimensions, in this precedence order:
+The customer-facing label is a projection of this data. Confidence alone never produces
+**confirmed**. Rejected and superseded material remains in the append-only history, even when it is not
+part of the active projection. Relationships retain their supporting claim and evidence identifiers
+through replay and handoff.
 
-1. Rejected, retracted, and superseded claims remain visible only as history.
-2. An active contradiction is **contested**.
-3. Human-confirmed, non-conflicting evidence is **confirmed**.
-4. Direct evidence-backed statements are **heard**.
-5. Derived evidence-backed claims are **inferred**.
-6. Recommendations and hypotheses are **suggested**.
-7. Missing evidence, low confidence, an unresolved speaker, or stale evidence adds **needs validation**.
+## Implemented correction loop
 
-Confidence alone can never produce **confirmed**.
+The current native review surface supports authenticated accept/reject decisions for claims and visual
+observations. Corrections append new events; they never rewrite an earlier utterance, evidence record,
+model receipt, or review. A new proposal can explicitly supersede an older claim while preserving both
+records.
 
-Provider-selected labels and confidence remain proposal metadata. Claim extraction always enters the live projection and canonical journal as **suggested / needs validation**; only a deterministic evidence rule or an explicit Scout review event may promote it. Relationship projections retain the same origin, validation state, supporting claims, and evidence identifiers through replay, graph presentation, and Codex handoff.
+Evidence navigation currently resolves a claim to its immutable evidence identifiers and stored
+excerpt/source locator. Utterance, image, document, manual-note, and external-reference sources are
+represented, but exact audio time ranges and image-region coordinates are not yet first-class evidence
+fields.
 
-## The correction loop
+## Transcript durability is explicit
 
-Every graph node, edge, insight, and opportunity can reveal its supporting claim and exact source. A customer correction appends a validation or revision event. It never deletes the original observation or silently changes the record.
+Transcript finality and durable evidence are separate states. A final provider candidate first appears
+as **Stabilising** while Scout validates immutable capture timing and appends it. **Committed** means the
+exact utterance revision is present in the encrypted canonical journal. **Uncommitted** means timing or
+append failed: the row remains visible for operator recovery, never feeds claims or handoff, and an
+always-visible warning remains present even when destination controls are hidden. A later diarization
+revision receives its own operation identity so a stale persistence completion cannot relabel a newer
+row.
 
-The live experience must make these actions easy:
+Archive navigation also follows the authoritative lifecycle rather than optimistic UI state. It asks
+the live coordinator to cancel an in-flight start or stop producers and drain active transcripts; the
+UI remains listening until the coordinator completes. Demo playback is the only locally stopped path.
 
-- “Show source” jumps to the exact utterance, audio range, or image region.
-- “That is not what I meant” disputes the claim while preserving evidence.
-- “That is correct” records confirmation and the confirming participant.
-- “Speaker 2 is Priya” resolves identity without rewriting old utterances.
-- “That was a future idea” changes world scope from current to proposed through a revision.
+## Product targets that are not yet implemented end to end
 
-## Consent and retention
+The following are design requirements, not current operational claims:
 
-- Capture is visibly off by default and requires a deliberate start action.
-- Recording state remains continuously visible; pausing creates an explicit gap event.
-- The session records capture scope: microphone, selected system audio, images, and imported documents.
-- Raw PCM is transient and memory-only in the current build; finalized evidence-linked utterances are
-  encrypted locally and follow the engagement retention policy.
-- Derived claims retain provenance tombstones when source evidence is deleted under policy.
-- Context packs exclude raw audio, unrestricted transcripts, and personal data unless explicitly approved.
-- Approved context packs contain only the selected POC, its factual claim and graph dependency closure, and explicit read-only guardrails. Unrelated claims, entities, relationships, questions, and opportunities stay in Scout.
-- Context packs exclude original and normalized image bytes by default. Visual observations retain the SHA-256 of the exact normalized evidence asset, while asset retention remains a separate local policy.
-- Per-engagement encryption keys and key-shredding deletion are a future requirement. The current
-  journal uses one device-bound event-store key.
+- a first-class conflict state with deterministic contested/resolved projection;
+- evidence-availability states such as offline, policy-removed, or corrupt;
+- participant/candidate/anonymous speaker-resolution state and append-only speaker mapping;
+- a dispute/retract interaction in the native review surface;
+- world-scope revisions for current, proposed, hypothetical, and historical statements;
+- exact “show source” navigation to an audio range or image region;
+- durable capture-scope and pause-gap events;
+- retention tombstones for evidence removed under policy; and
+- participant identity attached to a confirmation event.
+
+Until those contracts exist in `ScoutCore`, presentation copy, evaluations, and handoffs must describe
+them as proposed capabilities. They must not infer a conflict from confidence, silently resolve
+stakeholder disagreement, or claim that an operator action was recorded when no canonical event exists.
+
+## Consent, retention, and export boundaries
+
+- Capture starts only after a deliberate operator action and its active state remains visible.
+- Raw PCM is transient and memory-only in the current implementation.
+- Successfully committed finalized utterance revisions and evidence excerpts are encrypted in the
+  local append-only journal; uncommitted transcript rows are UI recovery state, not evidence.
+- Approved context packs exclude raw audio, unrestricted transcripts, original or normalized image
+  bytes, secrets, and personal data by default.
+- An approved pack must contain only the selected POC and its validated dependency closure, with
+  explicit acceptance criteria, constraints, redaction metadata, and canonical evidence references.
+- Visual observations retain the hash of the normalized evidence asset; asset retention remains a
+  separate local policy.
+- Per-engagement encryption keys, key-shredding deletion, and automated migration of pre-encryption
+  journals remain future requirements. The current journal uses one device-bound event-store key.

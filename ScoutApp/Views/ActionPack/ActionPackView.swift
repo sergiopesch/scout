@@ -45,7 +45,7 @@ struct ActionPackView: View {
             }
             .padding(16)
         }
-        .background(ScoutColors.canvas)
+        .background(Color.clear)
         .sheet(item: $handoffReceipt) { receipt in
             HandoffReceiptView(receipt: receipt)
         }

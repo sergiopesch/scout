@@ -222,6 +222,37 @@ struct VisualEvidencePanel: View {
                         }
                     }
                     .padding(.top, 3)
+                } else if proposal.reviewStatus == .legacyConfirmed
+                    || proposal.reviewStatus == .legacyRejected
+                {
+                    HStack(spacing: 7) {
+                        if isReviewing {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("Authenticating legacy decision…")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(ScoutColors.secondaryText)
+                        } else if proposal.reviewStatus == .legacyConfirmed {
+                            Button("Re-authenticate confirmation") {
+                                workspace.confirmVisualObservation(proposal.id)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.mini)
+                            .tint(ScoutColors.gold)
+                            .foregroundStyle(ScoutColors.canvas)
+                            .accessibilityIdentifier("scout.visualEvidence.reattestConfirm.\(proposal.id)")
+                        } else {
+                            Button("Re-authenticate rejection") {
+                                workspace.rejectVisualObservation(proposal.id)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.mini)
+                            .tint(ScoutColors.gold)
+                            .foregroundStyle(ScoutColors.canvas)
+                            .accessibilityIdentifier("scout.visualEvidence.reattestReject.\(proposal.id)")
+                        }
+                    }
+                    .padding(.top, 3)
                 }
             }
         }
@@ -246,9 +277,9 @@ struct VisualEvidencePanel: View {
 
     private func reviewColor(_ status: VisualEvidenceReviewStatus) -> Color {
         switch status {
-        case .proposed: ScoutColors.gold
+        case .proposed, .legacyConfirmed: ScoutColors.gold
         case .confirmed: ScoutColors.mint
-        case .rejected: ScoutColors.coral
+        case .rejected, .legacyRejected: ScoutColors.coral
         }
     }
 
@@ -257,6 +288,8 @@ struct VisualEvidencePanel: View {
         case .proposed: "MODEL PROPOSAL · NOT GRAPH STATE"
         case .confirmed: "HUMAN-CONFIRMED · EVIDENCE ONLY · NOT GRAPH STATE"
         case .rejected: "REJECTED · EXCLUDED FROM USE"
+        case .legacyConfirmed: "LEGACY CONFIRMATION · UNATTESTED · REVALIDATION REQUIRED"
+        case .legacyRejected: "LEGACY REJECTION · UNATTESTED · REVALIDATION REQUIRED"
         }
     }
 

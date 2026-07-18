@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,14 +18,26 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          node-version: "22"
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24.14.0"
           cache: npm
           cache-dependency-path: Gateway/package-lock.json
       - name: Install XcodeGen
         run: brew install xcodegen
+      - name: Verify pinned XcodeGen
+        run: |
+          test "$(xcodegen --version)" = "Version: $(tr -d '\n' < .xcodegen-version)"
+      - name: Record toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          node --version
+          npm --version
+          xcodegen --version
       - name: Install pinned Gateway dependencies
         run: npm ci --prefix Gateway
       - name: Verify repository

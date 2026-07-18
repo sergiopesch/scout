@@ -3,10 +3,11 @@
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateReleaseVersion } from "./release-policy.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const workspace = dirname(scriptDirectory);
-const version = process.env.SCOUT_RELEASE_VERSION ?? "0.1.0";
+const version = validateReleaseVersion(process.env.SCOUT_RELEASE_VERSION ?? "0.1.0");
 const developerTool = join(workspace, ".build", "tools", "scout-launcher");
 const packagedTool = join(
   workspace,

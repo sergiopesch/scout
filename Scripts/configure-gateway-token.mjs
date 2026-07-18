@@ -10,6 +10,7 @@ const workspace = dirname(scriptDirectory);
 const target = join(workspace, ".env.local");
 const temporary = join(workspace, `.env.local.${process.pid}.tmp`);
 const source = join(workspace, "Tools", "ScoutLauncher", "main.swift");
+const policySource = join(workspace, "Tools", "ScoutLauncher", "LauncherSecurityPolicy.swift");
 const tool = join(workspace, ".build", "tools", "scout-launcher");
 
 function run(executable, args, options = {}) {
@@ -40,7 +41,9 @@ async function compileSecretTool() {
   await mkdir(dirname(tool), { recursive: true });
   let rebuild = false;
   try {
-    rebuild = (await stat(source)).mtimeMs > (await stat(tool)).mtimeMs;
+    const toolModifiedAt = (await stat(tool)).mtimeMs;
+    rebuild = (await stat(source)).mtimeMs > toolModifiedAt
+      || (await stat(policySource)).mtimeMs > toolModifiedAt;
   } catch {
     rebuild = true;
   }
@@ -49,8 +52,13 @@ async function compileSecretTool() {
     "swiftc",
     "-parse-as-library",
     "-O",
+    "-D",
+    "SCOUT_SECRET_TOOL",
     "-framework",
     "Security",
+    "-framework",
+    "LocalAuthentication",
+    policySource,
     source,
     "-o",
     tool,

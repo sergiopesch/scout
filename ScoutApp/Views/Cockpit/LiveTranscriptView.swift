@@ -3,6 +3,7 @@ import SwiftUI
 struct LiveTranscriptView: View {
     let workspace: ScoutWorkspace
     @State private var searchText = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var visibleUtterances: [TranscriptUtterance] {
         guard !searchText.isEmpty else { return workspace.transcript }
@@ -13,6 +14,9 @@ struct LiveTranscriptView: View {
     }
 
     var body: some View {
+        let utterances = visibleUtterances
+        let finalUtteranceID = utterances.last?.id
+
         VStack(spacing: 0) {
             ScoutPanelHeader(eyebrow: "Diarised source", title: "Live transcript") {
                 HStack(spacing: 9) {
@@ -30,10 +34,10 @@ struct LiveTranscriptView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(visibleUtterances) { utterance in
+                        ForEach(utterances) { utterance in
                             TranscriptRow(utterance: utterance)
                                 .id(utterance.id)
-                            if utterance.id != visibleUtterances.last?.id {
+                            if utterance.id != finalUtteranceID {
                                 Divider()
                                     .overlay(ScoutColors.stroke.opacity(0.7))
                                     .padding(.leading, 48)
@@ -48,8 +52,13 @@ struct LiveTranscriptView: View {
                     .padding(.horizontal, ScoutSpacing.medium)
                 }
                 .onChange(of: workspace.transcript.count) { _, _ in
-                    withAnimation(.easeOut(duration: 0.25)) {
+                    guard workspace.captureState == .listening, searchText.isEmpty else { return }
+                    if reduceMotion {
                         proxy.scrollTo("listening-indicator", anchor: .bottom)
+                    } else {
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            proxy.scrollTo("listening-indicator", anchor: .bottom)
+                        }
                     }
                 }
             }
@@ -89,6 +98,9 @@ private struct TranscriptRow: View {
                         .lineLimit(1)
                     Spacer()
                     EvidenceBadge(kind: utterance.provenance, compact: true)
+                    if utterance.commitState != .committed {
+                        TranscriptCommitBadge(state: utterance.commitState)
+                    }
                     Text(utterance.timestamp)
                         .font(.system(size: 8, weight: .medium, design: .monospaced))
                         .foregroundStyle(ScoutColors.secondaryText)
@@ -102,8 +114,47 @@ private struct TranscriptRow: View {
         }
         .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(utterance.timestamp), \(utterance.speaker.name), \(utterance.text), \(utterance.provenance.rawValue), \(Int(utterance.confidence * 100)) percent confidence")
+        .accessibilityLabel("\(utterance.timestamp), \(utterance.speaker.name), \(utterance.text), \(utterance.provenance.rawValue), \(utterance.commitState.accessibilityLabel), \(Int(utterance.confidence * 100)) percent confidence")
         .accessibilityIdentifier("scout.utterance.\(utterance.id)")
+    }
+}
+
+private struct TranscriptCommitBadge: View {
+    let state: TranscriptCommitState
+
+    var body: some View {
+        Label(label, systemImage: symbol)
+            .font(.system(size: 8, weight: .bold, design: .rounded))
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.10), in: Capsule())
+            .overlay(Capsule().stroke(color.opacity(0.24), lineWidth: 1))
+            .accessibilityLabel(state.accessibilityLabel)
+    }
+
+    private var label: String {
+        switch state {
+        case .pending: "Stabilising"
+        case .committed: "Committed"
+        case .uncommitted: "Uncommitted"
+        }
+    }
+
+    private var symbol: String {
+        switch state {
+        case .pending: "clock"
+        case .committed: "checkmark.seal.fill"
+        case .uncommitted: "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var color: Color {
+        switch state {
+        case .pending: ScoutColors.gold
+        case .committed: ScoutColors.mint
+        case .uncommitted: ScoutColors.coral
+        }
     }
 }
 

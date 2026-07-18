@@ -1,6 +1,97 @@
 import Foundation
 import Observation
 
+protocol MicrophoneCaptureProviding: Sendable {
+    func frames() -> AsyncThrowingStream<CapturedAudioFrame, Error>
+    func start() async throws
+    func stop()
+}
+
+extension MicrophoneAudioCapture: MicrophoneCaptureProviding {}
+
+protocol SystemAudioCaptureProviding: Sendable {
+    func shareableSources(requestPermission: Bool) async throws -> [SystemAudioCaptureSource]
+    func frames() -> AsyncThrowingStream<CapturedAudioFrame, Error>
+    func start(source: SystemAudioCaptureSource) async throws
+    func stop()
+}
+
+extension SystemAudioCapture: SystemAudioCaptureProviding {}
+
+protocol RealtimeTranscriptionProviding: Sendable {
+    func events() async -> AsyncStream<RealtimeTranscriptEvent>
+    func connect(language: String?) async throws
+    func append(frame: CapturedAudioFrame) async throws
+    func finishAndDrain(timeout: Duration) async throws
+    func disconnect() async
+}
+
+extension RealtimeTranscriptionClient: RealtimeTranscriptionProviding {}
+
+/// Serializes start/stop intent independently from the active capture generation. Stop must not
+/// invalidate the active generation until buffered transcript completions have drained, but it must
+/// make every suspended startup continuation stale immediately.
+struct LiveCaptureLifecycle: Equatable, Sendable {
+    enum Phase: Equatable, Sendable {
+        case idle
+        case starting(UInt64)
+        case listening(UInt64)
+        case stopping(UInt64)
+    }
+
+    struct StopRequest: Equatable, Sendable {
+        let token: UInt64
+        let wasListening: Bool
+    }
+
+    private(set) var phase: Phase = .idle
+    private var nextToken: UInt64 = 0
+
+    mutating func beginStart() -> UInt64? {
+        guard phase == .idle else { return nil }
+        nextToken &+= 1
+        phase = .starting(nextToken)
+        return nextToken
+    }
+
+    func isStarting(_ token: UInt64) -> Bool {
+        phase == .starting(token)
+    }
+
+    mutating func markListening(_ token: UInt64) -> Bool {
+        guard isStarting(token) else { return false }
+        phase = .listening(token)
+        return true
+    }
+
+    mutating func beginStop() -> StopRequest? {
+        let wasListening: Bool
+        switch phase {
+        case .idle, .stopping:
+            return nil
+        case .starting:
+            wasListening = false
+        case .listening:
+            wasListening = true
+        }
+        nextToken &+= 1
+        phase = .stopping(nextToken)
+        return StopRequest(token: nextToken, wasListening: wasListening)
+    }
+
+    mutating func finishStop(_ token: UInt64) -> Bool {
+        guard phase == .stopping(token) else { return false }
+        phase = .idle
+        return true
+    }
+
+    mutating func failStart(_ token: UInt64) -> Bool {
+        guard isStarting(token) else { return false }
+        phase = .idle
+        return true
+    }
+}
+
 @MainActor
 @Observable
 final class LiveDiscoveryCoordinator {
@@ -19,19 +110,31 @@ final class LiveDiscoveryCoordinator {
     }
 
     @ObservationIgnored
-    private let microphone: MicrophoneAudioCapture
+    private let microphone: any MicrophoneCaptureProviding
     @ObservationIgnored
-    private let systemAudio: SystemAudioCapture
+    private let systemAudio: any SystemAudioCaptureProviding
     @ObservationIgnored
-    private let microphoneRealtime: RealtimeTranscriptionClient
+    private let microphoneRealtime: any RealtimeTranscriptionProviding
     @ObservationIgnored
-    private let systemRealtime: RealtimeTranscriptionClient
+    private let systemRealtime: any RealtimeTranscriptionProviding
     @ObservationIgnored
     private let journal: LiveEventJournal
     @ObservationIgnored
     private let diarization: DiarizationClient
     @ObservationIgnored
     private let claimExtraction: ClaimExtractionClient
+    @ObservationIgnored
+    private let prepareCaptureSession: @Sendable (
+        _ sessionID: String,
+        _ title: String,
+        _ speakers: [LiveEventJournal.SpeakerDescriptor]
+    ) async throws -> Void
+    @ObservationIgnored
+    private var startTransitionTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var startTransitionToken: UInt64?
+    @ObservationIgnored
+    private var stopTransitionTask: Task<Void, Never>?
     @ObservationIgnored
     private var microphoneAudioTask: Task<Void, Never>?
     @ObservationIgnored
@@ -54,10 +157,10 @@ final class LiveDiscoveryCoordinator {
 
     private var provisionalText: [String: String] = [:]
     private var transcriptIndex: [String: Int] = [:]
+    private var captureLifecycle = LiveCaptureLifecycle()
     private var captureGeneration: UInt64 = 0
     private var microphoneConnected = false
     private var systemRealtimeConnected = false
-    private var isStopping = false
     private var activeRunClock: RealtimeSessionClock?
     private var activeRunSessionID: String?
     private var resumeOffsetMillisecondsBySession: [String: Int64] = [:]
@@ -79,13 +182,18 @@ final class LiveDiscoveryCoordinator {
 
     init(
         workspace: ScoutWorkspace,
-        microphone: MicrophoneAudioCapture = .init(),
-        systemAudio: SystemAudioCapture = .init(),
-        microphoneRealtime: RealtimeTranscriptionClient = .init(),
-        systemRealtime: RealtimeTranscriptionClient = .init(),
+        microphone: any MicrophoneCaptureProviding = MicrophoneAudioCapture(),
+        systemAudio: any SystemAudioCaptureProviding = SystemAudioCapture(),
+        microphoneRealtime: any RealtimeTranscriptionProviding = RealtimeTranscriptionClient(),
+        systemRealtime: any RealtimeTranscriptionProviding = RealtimeTranscriptionClient(),
         journal: LiveEventJournal = .init(),
         diarization: DiarizationClient = .init(),
-        claimExtraction: ClaimExtractionClient = .init()
+        claimExtraction: ClaimExtractionClient = .init(),
+        prepareCaptureSession: (@Sendable (
+            _ sessionID: String,
+            _ title: String,
+            _ speakers: [LiveEventJournal.SpeakerDescriptor]
+        ) async throws -> Void)? = nil
     ) {
         self.workspace = workspace
         self.microphone = microphone
@@ -95,11 +203,21 @@ final class LiveDiscoveryCoordinator {
         self.journal = journal
         self.diarization = diarization
         self.claimExtraction = claimExtraction
+        self.prepareCaptureSession = prepareCaptureSession ?? { sessionID, title, speakers in
+            try await journal.prepareSession(
+                sessionID: sessionID,
+                title: title,
+                speakers: speakers
+            )
+        }
     }
 
     func install() {
         workspace?.liveCaptureToggle = { [weak self] in
             self?.toggleCapture()
+        }
+        workspace?.liveCaptureStopRequest = { [weak self] in
+            _ = self?.scheduleStop()
         }
         workspace?.systemAudioRefresh = { [weak self] in
             Task { await self?.refreshSystemAudioSources() }
@@ -107,11 +225,13 @@ final class LiveDiscoveryCoordinator {
     }
 
     func toggleCapture() {
-        guard let workspace else { return }
-        if workspace.captureState == .listening {
-            Task { await stop() }
-        } else {
-            Task { await start() }
+        switch captureLifecycle.phase {
+        case .idle:
+            _ = scheduleStart()
+        case .starting, .listening:
+            _ = scheduleStop()
+        case .stopping:
+            break
         }
     }
 
@@ -122,7 +242,7 @@ final class LiveDiscoveryCoordinator {
         defer { workspace.isRefreshingAudioSources = false }
 
         do {
-            let sources = try await systemAudio.shareableSources()
+            let sources = try await systemAudio.shareableSources(requestPermission: true)
             workspace.systemAudioSources = sources
             if let selected = workspace.selectedSystemAudioSourceID,
                !sources.contains(where: { $0.id == selected }) {
@@ -134,20 +254,75 @@ final class LiveDiscoveryCoordinator {
     }
 
     func start() async {
-        guard microphoneAudioTask == nil,
+        guard let task = scheduleStart() else { return }
+        await task.value
+    }
+
+    func stop() async {
+        if let task = scheduleStop() {
+            await task.value
+        } else if case .stopping = captureLifecycle.phase {
+            await stopTransitionTask?.value
+        }
+    }
+
+    @discardableResult
+    private func scheduleStart() -> Task<Void, Never>? {
+        guard startTransitionTask == nil,
+              stopTransitionTask == nil,
+              microphoneAudioTask == nil,
               microphoneTranscriptTask == nil,
               systemAudioTask == nil,
               systemTranscriptTask == nil,
               elapsedTask == nil,
-              !isStopping,
-              let workspace
-        else { return }
+              let token = captureLifecycle.beginStart()
+        else { return nil }
+        workspace?.isCaptureTransitioning = true
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performStart(token: token)
+            if self.startTransitionToken == token {
+                self.startTransitionTask = nil
+                self.startTransitionToken = nil
+                if case .stopping = self.captureLifecycle.phase {
+                    // The stop transition owns the final published state.
+                } else {
+                    self.workspace?.isCaptureTransitioning = false
+                }
+            }
+        }
+        startTransitionToken = token
+        startTransitionTask = task
+        return task
+    }
+
+    @discardableResult
+    private func scheduleStop() -> Task<Void, Never>? {
+        guard let request = captureLifecycle.beginStop() else { return nil }
+        workspace?.isCaptureTransitioning = true
+        let pendingStart = startTransitionTask
+        pendingStart?.cancel()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performStop(request: request, pendingStart: pendingStart)
+            if self.captureLifecycle.phase == .idle {
+                self.stopTransitionTask = nil
+            }
+        }
+        stopTransitionTask = task
+        return task
+    }
+
+    private func performStart(token: UInt64) async {
+        guard captureLifecycle.isStarting(token), let workspace else { return }
 
         workspace.pauseDemo()
         workspace.liveError = nil
 
         let capturesSystemAudio = workspace.audioCaptureMode == .onlineMeeting
         guard !capturesSystemAudio || workspace.selectedSystemAudioSource != nil else {
+            _ = captureLifecycle.failStart(token)
             workspace.captureState = .paused
             workspace.liveError = "Choose the meeting window or application before listening."
             if workspace.systemAudioSources.isEmpty {
@@ -157,8 +332,6 @@ final class LiveDiscoveryCoordinator {
         }
 
         workspace.beginLiveSessionIfNeeded()
-
-        workspace.captureState = .listening
 
         do {
             var speakers = [
@@ -177,19 +350,23 @@ final class LiveDiscoveryCoordinator {
                     affiliation: .unknown
                 ))
             }
-            try await journal.prepareSession(
-                sessionID: workspace.activeEvidenceSessionID,
-                title: "\(workspace.selectedSession.organization) — \(workspace.selectedSession.title)",
-                speakers: speakers
+            try await prepareCaptureSession(
+                workspace.activeEvidenceSessionID,
+                "\(workspace.selectedSession.organization) — \(workspace.selectedSession.title)",
+                speakers
             )
         } catch {
+            guard captureLifecycle.isStarting(token) else { return }
+            _ = captureLifecycle.failStart(token)
             workspace.captureState = .paused
             workspace.liveError = "Event journal unavailable: \(error.localizedDescription)"
             return
         }
+        guard captureLifecycle.isStarting(token), !Task.isCancelled else { return }
 
         let elapsedSeconds = max(0, workspace.elapsedSeconds)
         guard elapsedSeconds <= Int(Int64.max / 1_000) else {
+            _ = captureLifecycle.failStart(token)
             workspace.captureState = .paused
             workspace.liveError = "The session clock exceeded Scout's supported range."
             return
@@ -208,27 +385,38 @@ final class LiveDiscoveryCoordinator {
 
         let microphoneFrames = microphone.frames()
         let microphoneEvents = await microphoneRealtime.events()
+        guard captureLifecycle.isStarting(token), !Task.isCancelled else { return }
 
         var systemFrames: AsyncThrowingStream<CapturedAudioFrame, Error>?
         var systemEvents: AsyncStream<RealtimeTranscriptEvent>?
         if capturesSystemAudio {
             systemFrames = systemAudio.frames()
             systemEvents = await systemRealtime.events()
+            guard captureLifecycle.isStarting(token), !Task.isCancelled else { return }
         }
 
         do {
             try await microphoneRealtime.connect(language: "en")
             microphoneConnected = true
+            guard captureLifecycle.isStarting(token), !Task.isCancelled else { return }
             try await microphone.start()
+            guard captureLifecycle.isStarting(token), !Task.isCancelled else { return }
 
             if capturesSystemAudio, let source = workspace.selectedSystemAudioSource {
                 try await systemRealtime.connect(language: "en")
                 systemRealtimeConnected = true
+                guard captureLifecycle.isStarting(token), !Task.isCancelled else { return }
                 try await systemAudio.start(source: source)
+                guard captureLifecycle.isStarting(token), !Task.isCancelled else { return }
             }
         } catch {
-            workspace.liveError = error.localizedDescription
-            await stop()
+            guard captureLifecycle.isStarting(token) else { return }
+            guard let request = captureLifecycle.beginStop() else { return }
+            await performStop(
+                request: request,
+                pendingStart: nil,
+                startupError: error.localizedDescription
+            )
             return
         }
 
@@ -257,6 +445,8 @@ final class LiveDiscoveryCoordinator {
                 generation: generation
             )
         }
+        guard captureLifecycle.markListening(token) else { return }
+        workspace.captureState = .listening
         elapsedTask = Task { [weak self] in
             let clock = ContinuousClock()
             while !Task.isCancelled {
@@ -275,19 +465,30 @@ final class LiveDiscoveryCoordinator {
         }
     }
 
-    func stop() async {
-        guard let workspace, !isStopping else { return }
-        isStopping = true
-        defer { isStopping = false }
+    private func performStop(
+        request: LiveCaptureLifecycle.StopRequest,
+        pendingStart: Task<Void, Never>?,
+        startupError: String? = nil
+    ) async {
+        guard let workspace else { return }
 
         // Stop capture producers first. Their streams finish only after the last
         // captured frame has been yielded, so awaiting the producer tasks keeps
         // that immutable frame timing in the realtime client before commit.
         microphone.stop()
         systemAudio.stop()
-        recordCaptureStop()
+        if request.wasListening {
+            recordCaptureStop()
+        }
         elapsedTask?.cancel()
         elapsedTask = nil
+
+        // A connect/start operation may ignore cancellation until its current system call returns.
+        // Keep the lifecycle in `.stopping`, wait for that continuation to observe its stale token,
+        // then stop both producers again before disconnecting. A newer start cannot interleave.
+        await pendingStart?.value
+        microphone.stop()
+        systemAudio.stop()
 
         let microphoneProducer = microphoneAudioTask
         let systemProducer = systemAudioTask
@@ -296,8 +497,8 @@ final class LiveDiscoveryCoordinator {
         microphoneAudioTask = nil
         systemAudioTask = nil
 
-        let shouldDrainMicrophone = microphoneConnected
-        let shouldDrainSystem = systemRealtimeConnected
+        let shouldDrainMicrophone = request.wasListening && microphoneConnected
+        let shouldDrainSystem = request.wasListening && systemRealtimeConnected
         let microphoneClient = microphoneRealtime
         let systemClient = systemRealtime
         let drainFailures = await withTaskGroup(of: String?.self, returning: [String].self) { group in
@@ -342,8 +543,13 @@ final class LiveDiscoveryCoordinator {
         await systemTranscriptTask?.value
         microphoneTranscriptTask = nil
         systemTranscriptTask = nil
-        workspace.captureState = .paused
-        if !drainFailures.isEmpty {
+        if captureLifecycle.finishStop(request.token) {
+            workspace.captureState = .paused
+            workspace.isCaptureTransitioning = false
+        }
+        if let startupError {
+            workspace.liveError = startupError
+        } else if !drainFailures.isEmpty {
             workspace.liveError = "Capture stopped safely, but final transcript completion was incomplete (\(drainFailures.joined(separator: "; ")))."
         }
         activeRunClock = nil
@@ -367,7 +573,7 @@ final class LiveDiscoveryCoordinator {
 
     private func audioTask(
         frames: AsyncThrowingStream<CapturedAudioFrame, Error>,
-        client: RealtimeTranscriptionClient,
+        client: any RealtimeTranscriptionProviding,
         generation: UInt64
     ) -> Task<Void, Never> {
         Task { [weak self] in
@@ -404,7 +610,15 @@ final class LiveDiscoveryCoordinator {
             let itemID = "\(channel.rawValue)-\(fragment.itemID)"
             let text = (provisionalText[itemID] ?? "") + fragment.text
             provisionalText[itemID] = text
-            upsert(itemID, text: text, isFinal: false, channel: channel, startMilliseconds: nil)
+            upsert(
+                itemID,
+                text: text,
+                isFinal: false,
+                channel: channel,
+                startMilliseconds: nil,
+                commitState: .pending,
+                commitOperationID: itemID
+            )
         case let .completed(fragment):
             let itemID = "\(channel.rawValue)-\(fragment.itemID)"
             let text = fragment.text.isEmpty ? provisionalText[itemID] ?? "" : fragment.text
@@ -417,7 +631,15 @@ final class LiveDiscoveryCoordinator {
                       clock: runClock
                   )
             else {
-                upsert(itemID, text: text, isFinal: true, channel: channel, startMilliseconds: nil)
+                upsert(
+                    itemID,
+                    text: text,
+                    isFinal: true,
+                    channel: channel,
+                    startMilliseconds: nil,
+                    commitState: .uncommitted,
+                    commitOperationID: nil
+                )
                 workspace.liveError = "A final transcript arrived without matching captured-audio timing; Scout left it uncommitted for review."
                 return
             }
@@ -427,7 +649,9 @@ final class LiveDiscoveryCoordinator {
                 text: text,
                 isFinal: true,
                 channel: channel,
-                startMilliseconds: captureRange.start
+                startMilliseconds: captureRange.start,
+                commitState: .pending,
+                commitOperationID: itemID
             )
             let sessionID = workspace.activeEvidenceSessionID
             resumeOffsetMillisecondsBySession[sessionID] = max(
@@ -538,6 +762,7 @@ final class LiveDiscoveryCoordinator {
         startMilliseconds: Int64
     ) {
         guard let workspace else { return }
+        let commitOperationID = "\(itemID)-diarized-\(segment.id)"
         let utterance = TranscriptUtterance(
             id: index == 0 ? "realtime-\(itemID)" : "realtime-\(itemID)-segment-\(segment.id)",
             speaker: speaker,
@@ -545,7 +770,9 @@ final class LiveDiscoveryCoordinator {
             text: segment.text,
             provenance: .heard,
             confidence: 0.94,
-            isFinal: true
+            isFinal: true,
+            commitState: .pending,
+            commitOperationID: commitOperationID
         )
 
         if index == 0, let transcriptPosition = transcriptIndex[itemID], workspace.transcript.indices.contains(transcriptPosition) {
@@ -594,6 +821,12 @@ final class LiveDiscoveryCoordinator {
                     startMilliseconds: startMilliseconds,
                     endMilliseconds: endMilliseconds
                 )
+                if coordinator.workspace?.activeEvidenceSessionID == sessionID {
+                    coordinator.updateTranscriptCommitState(
+                        operationID: itemID,
+                        state: .committed
+                    )
+                }
                 guard coordinator.captureGeneration == generation,
                       coordinator.workspace?.activeEvidenceSessionID == sessionID
                 else { return }
@@ -604,14 +837,38 @@ final class LiveDiscoveryCoordinator {
                     source: source
                 )
             } catch is CancellationError {
+                if coordinator.workspace?.activeEvidenceSessionID == sessionID {
+                    coordinator.updateTranscriptCommitState(
+                        operationID: itemID,
+                        state: .uncommitted
+                    )
+                }
                 return
             } catch {
+                if coordinator.workspace?.activeEvidenceSessionID == sessionID {
+                    coordinator.updateTranscriptCommitState(
+                        operationID: itemID,
+                        state: .uncommitted
+                    )
+                }
                 guard coordinator.captureGeneration == generation,
                       coordinator.workspace?.activeEvidenceSessionID == sessionID
                 else { return }
                 coordinator.workspace?.liveError = "Transcript shown, but durable evidence failed: \(error.localizedDescription)"
             }
         }
+    }
+
+    private func updateTranscriptCommitState(
+        operationID: String,
+        state: TranscriptCommitState
+    ) {
+        guard let workspace,
+              let index = workspace.transcript.firstIndex(where: {
+                  $0.commitOperationID == operationID
+              })
+        else { return }
+        workspace.transcript[index].commitState = state
     }
 
     private func enqueueClaimExtraction(
@@ -714,7 +971,7 @@ final class LiveDiscoveryCoordinator {
             for: request,
             speakerNamesByID: speakerNames
         )
-        try await journal.recordClaimProjection(
+        let commit = try await journal.recordClaimProjection(
             sessionID: pending.sessionID,
             projection: projection
         )
@@ -727,7 +984,10 @@ final class LiveDiscoveryCoordinator {
         }
         latestAppliedClaimBoundary[pending.sessionID] = request.eventBoundary
         guard let workspace, workspace.activeEvidenceSessionID == pending.sessionID else { return }
-        workspace.apply(projection)
+        guard let canonicalProjection = WorkspaceStateProjector().project(commit.canonicalState) else {
+            throw LiveIntelligenceError.missingCanonicalClaimProjection
+        }
+        workspace.applyCanonicalClaimProjection(canonicalProjection)
         workspace.refreshDerivedIntelligence()
     }
 
@@ -747,6 +1007,7 @@ final class LiveDiscoveryCoordinator {
 
     private enum LiveIntelligenceError: Error {
         case numericBoundaryOverflow
+        case missingCanonicalClaimProjection
     }
 
     private func launchBackgroundWork(
@@ -830,7 +1091,9 @@ final class LiveDiscoveryCoordinator {
         text: String,
         isFinal: Bool,
         channel: Channel,
-        startMilliseconds: Int64?
+        startMilliseconds: Int64?,
+        commitState: TranscriptCommitState,
+        commitOperationID: String?
     ) {
         guard let workspace, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
@@ -845,7 +1108,9 @@ final class LiveDiscoveryCoordinator {
             text: text,
             provenance: .heard,
             confidence: isFinal ? 0.90 : 0.65,
-            isFinal: isFinal
+            isFinal: isFinal,
+            commitState: commitState,
+            commitOperationID: commitOperationID
         )
 
         if let index = transcriptIndex[itemID], workspace.transcript.indices.contains(index) {

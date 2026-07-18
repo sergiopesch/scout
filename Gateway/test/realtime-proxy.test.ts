@@ -15,9 +15,9 @@ test("session updates are constrained to Scout transcription settings", () => {
         },
       },
     },
-  }), "gpt-realtime-whisper")) as any;
+  }), "gpt-4o-mini-transcribe")) as any;
 
-  assert.equal(result.session.audio.input.transcription.model, "gpt-realtime-whisper");
+  assert.equal(result.session.audio.input.transcription.model, "gpt-4o-mini-transcribe");
   assert.equal(result.session.audio.input.transcription.language, "en");
   assert.equal(result.session.audio.input.turn_detection, null);
   assert.equal(result.session.audio.input.noise_reduction.type, "far_field");

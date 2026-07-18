@@ -23,6 +23,10 @@ Turn approved discovery into software without flattening evidence, uncertainty, 
    - constraints and policies;
    - unresolved or contested items;
    - selected POC scope, non-goals, and success criteria.
+   When the approved pack or user already names an enterprise architecture, platform, delivery, data,
+   security, or AI concept, you may consult
+   [the optional enterprise classification vocabulary](references/enterprise-context.md) to normalise
+   terminology. The vocabulary is never evidence and does not add facts to the pack.
 6. Inspect the destination repository and produce a compact build manifest that maps every material implementation decision to Scout claim IDs or marks it as a new engineering assumption.
 7. Follow the user's requested execution mode. When they asked to build, implement and verify; when they asked to plan or review, do not mutate the repository.
 8. Report delivered acceptance criteria, remaining unknowns, and the Scout context-pack revision used.
@@ -34,6 +38,9 @@ Turn approved discovery into software without flattening evidence, uncertainty, 
 - Treat `suggested` as a recommendation, never a customer fact.
 - Preserve contradictions. Do not silently choose one stakeholder's account.
 - Never infer a missing compliance, security, data-retention, integration, or success-metric requirement.
+- Never infer a vendor, architecture pattern, operating method, control, or requirement merely because
+  it appears in the enterprise classification vocabulary. A classification label must resolve to
+  customer evidence or remain an explicitly attributed engineering assumption.
 - Keep raw audio, unrestricted transcripts, personal data, and redacted evidence out of the repository.
 - Do not bypass a context pack's redaction manifest.
 - If a later Scout revision makes the pack stale during work, stop before material new edits and re-read the approved context.
@@ -63,4 +70,8 @@ Keep this concise. Use Scout as the evidence index rather than copying the whole
 - Paginate `scout_list_context_packs`; filter by session whenever the session is known.
 - Use stable Scout identifiers in plans, commits, and handoff notes where they add traceability.
 - Treat every Scout MCP tool as read-only unless its description explicitly says otherwise and the user authorizes the side effect.
-- If Scout MCP is unavailable, report that the trusted handoff cannot be verified. Ask the user to run `make gateway-build` from the trusted Scout installation and confirm its local Gateway-only approval configuration is present; never print or request any token or approval key. Do not fall back to HTTP or substitute an unverified transcript dump.
+- If Scout MCP is unavailable, or a pack read reports that approval verification is not configured,
+  stop and report that the trusted handoff cannot be verified. The installed plugin requires an
+  operator-provisioned local pack location and `SCOUT_APPROVAL_HMAC_KEY`; never ask the user to paste,
+  print, or expose that symmetric key. Do not fall back to HTTP or substitute an unverified transcript
+  dump.

@@ -36,7 +36,7 @@ struct ReducerTests {
     @Test("Reducer rejects sequence gaps before applying payload")
     func sequenceGap() throws {
         let events = try ScoutFixtures.sampleEvents()
-        let firstState = try ScoutGraphReducer.reduce(
+        let firstState = try ScoutGraphReducer.reducePersisted(
             ScoutState(sessionID: ScoutFixtures.sessionID),
             event: events[0]
         )
@@ -47,12 +47,16 @@ struct ReducerTests {
             occurredAt: timestamp(),
             recordedAt: timestamp(1),
             actor: testSystemActor(),
+            authorization: EventAuthorizationRecord(
+                scope: .sessionLifecycle,
+                component: testText("test-suite")
+            ),
             payload: events[1].payload,
             previousHash: events[0].integrityHash
         )
 
         do {
-            _ = try ScoutGraphReducer.reduce(firstState, event: gap)
+            _ = try ScoutGraphReducer.reducePersisted(firstState, event: gap)
             Issue.record("Expected sequence gap to fail")
         } catch let error as ScoutReducerError {
             #expect(error == .unexpectedSequence(expected: 2, actual: 3))
@@ -62,7 +66,7 @@ struct ReducerTests {
     @Test("Reducer rejects a broken predecessor link")
     func predecessorMismatch() throws {
         let events = try ScoutFixtures.sampleEvents()
-        let firstState = try ScoutGraphReducer.reduce(
+        let firstState = try ScoutGraphReducer.reducePersisted(
             ScoutState(sessionID: ScoutFixtures.sessionID),
             event: events[0]
         )
@@ -73,12 +77,16 @@ struct ReducerTests {
             occurredAt: timestamp(),
             recordedAt: timestamp(1),
             actor: testSystemActor(),
+            authorization: EventAuthorizationRecord(
+                scope: .sessionLifecycle,
+                component: testText("test-suite")
+            ),
             payload: events[1].payload,
             previousHash: nil
         )
 
         do {
-            _ = try ScoutGraphReducer.reduce(firstState, event: broken)
+            _ = try ScoutGraphReducer.reducePersisted(firstState, event: broken)
             Issue.record("Expected predecessor mismatch")
         } catch let error as ScoutReducerError {
             #expect(error == .previousHashMismatch(
@@ -106,11 +114,15 @@ struct ReducerTests {
             occurredAt: timestamp(),
             recordedAt: timestamp(1),
             actor: testSystemActor(),
+            authorization: EventAuthorizationRecord(
+                scope: .deterministicProjection,
+                component: testText("test-suite")
+            ),
             payload: .claimProposed(claim)
         )
 
         do {
-            _ = try ScoutGraphReducer.reduce(state, event: event)
+            _ = try ScoutGraphReducer.reducePersisted(state, event: event)
             Issue.record("Expected ungrounded claim to fail")
         } catch let error as ScoutReducerError {
             #expect(error == .emptyEvidence(subject: claim.id.rawValue))
@@ -134,11 +146,15 @@ struct ReducerTests {
             occurredAt: timestamp(),
             recordedAt: timestamp(1),
             actor: testSystemActor(),
+            authorization: EventAuthorizationRecord(
+                scope: .capturePipeline,
+                component: testText("test-suite")
+            ),
             payload: .evidenceRecorded(evidence)
         )
 
         do {
-            _ = try ScoutGraphReducer.reduce(state, event: event)
+            _ = try ScoutGraphReducer.reducePersisted(state, event: event)
             Issue.record("Expected missing utterance to fail")
         } catch let error as ScoutReducerError {
             #expect(error == .unknownUtterance(missingUtterance))
@@ -165,9 +181,13 @@ struct ReducerTests {
             occurredAt: timestamp(),
             recordedAt: timestamp(1),
             actor: testSystemActor(),
+            authorization: EventAuthorizationRecord(
+                scope: .deterministicProjection,
+                component: testText("test-suite")
+            ),
             payload: .entityUpserted(update)
         )
-        let updatedState = try ScoutGraphReducer.reduce(baseState, event: event)
+        let updatedState = try ScoutGraphReducer.reducePersisted(baseState, event: event)
         let merged = try #require(updatedState.graph.entities[original.id])
 
         #expect(merged.canonicalName == testText("Salesforce CRM"))
@@ -188,10 +208,14 @@ struct ReducerTests {
             occurredAt: timestamp(),
             recordedAt: timestamp(1),
             actor: testSystemActor(),
+            authorization: EventAuthorizationRecord(
+                scope: .sessionLifecycle,
+                component: testText("test-suite")
+            ),
             payload: .speakerUpserted(try #require(state.speakers[ScoutFixtures.speakerID]))
         )
         do {
-            _ = try ScoutGraphReducer.reduce(state, event: extra)
+            _ = try ScoutGraphReducer.reducePersisted(state, event: extra)
             Issue.record("Expected terminal session to reject events")
         } catch let error as ScoutReducerError {
             #expect(error == .sessionHasEnded)

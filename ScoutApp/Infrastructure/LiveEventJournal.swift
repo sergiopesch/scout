@@ -34,6 +34,7 @@ actor LiveEventJournal {
         let evidenceID: EvidenceID
         let assetID: AssetID
         let assetSHA256: String
+        let mediaType: String
         let pixelWidth: Int
         let pixelHeight: Int
         let byteCount: Int
@@ -51,6 +52,36 @@ actor LiveEventJournal {
         let observationID: VisualObservationID
         let disposition: VisualObservationDisposition
         let committedReviewBoundary: AppendReceipt
+        let canonicalState: ScoutState
+    }
+
+    struct ClaimReviewReceipt: Equatable, Sendable {
+        let claimID: ClaimID
+        let status: ClaimStatus
+        let committedReviewBoundary: AppendReceipt
+        let canonicalState: ScoutState
+    }
+
+    /// The durable result of crossing a claim adapter projection into the canonical log.
+    /// `canonicalState` is the only state callers may project into the workspace; the incoming
+    /// UI-shaped proposal is deliberately not returned as an applyable result.
+    struct ClaimProjectionCommitResult: Sendable {
+        let appendedEventBoundaries: [AppendReceipt]
+        let canonicalState: ScoutState
+
+        var count: Int { appendedEventBoundaries.count }
+        var isEmpty: Bool { appendedEventBoundaries.isEmpty }
+        var first: AppendReceipt? { appendedEventBoundaries.first }
+    }
+
+    enum VisualObservationReviewPreparation: Equatable, Sendable {
+        case alreadyCommitted(VisualObservationReviewReceipt)
+        case authorizationRequired(LocalReviewIntent)
+    }
+
+    enum ClaimReviewPreparation: Equatable, Sendable {
+        case alreadyCommitted(ClaimReviewReceipt)
+        case authorizationRequired(LocalReviewIntent)
     }
 
     private let fileURL: URL
@@ -58,7 +89,11 @@ actor LiveEventJournal {
     private var store: SQLiteEventStore?
     private var builders: [SessionID: EventChainBuilder] = [:]
     private var operationIsLocked = false
-    private var operationWaiters: [CheckedContinuation<Void, Never>] = []
+    private struct OperationWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, Error>
+    }
+    private var operationWaiters: [OperationWaiter] = []
 
     init(
         fileURL: URL = LiveEventJournal.defaultStoreURL,
@@ -75,7 +110,7 @@ actor LiveEventJournal {
         title: String,
         speakers: [SpeakerDescriptor]
     ) async throws {
-        await acquireOperationLock()
+        try await acquireOperationLock()
         defer { releaseOperationLock() }
         try await prepareSessionLocked(
             sessionID: rawSessionID,
@@ -87,7 +122,7 @@ actor LiveEventJournal {
     /// Flushes WAL state and releases the SQLite handle. Tests and controlled shutdown paths use
     /// this before removing a store; normal app termination may rely on process teardown.
     func close() async throws {
-        await acquireOperationLock()
+        try await acquireOperationLock()
         defer { releaseOperationLock() }
         guard let store else { return }
         try await store.close()
@@ -104,21 +139,23 @@ actor LiveEventJournal {
         let database = try database()
         let existing = try await database.events(for: sessionID)
         var builder = try Self.builder(for: sessionID, existing: existing)
-        var additions: [ScoutEventEnvelope] = []
+        var additions: [ValidatedScoutEvent] = []
         let now = Self.timestamp()
-        let systemActor = try Self.systemActor()
+        let systemComponent = try Self.systemComponent()
 
         if existing.isEmpty {
             additions.append(try builder.seal(
                 id: try EventID(validating: "event-\(Self.digest("session|\(rawSessionID)"))-started"),
                 occurredAt: now,
                 recordedAt: now,
-                actor: systemActor,
-                payload: .sessionStarted(DiscoverySession(
-                    id: sessionID,
-                    title: try NonEmptyString(validating: title),
-                    startedAt: now
-                ))
+                command: .sessionLifecycle(
+                    component: systemComponent,
+                    operation: .start(DiscoverySession(
+                        id: sessionID,
+                        title: try NonEmptyString(validating: title),
+                        startedAt: now
+                    ))
+                )
             ))
         }
 
@@ -134,19 +171,23 @@ actor LiveEventJournal {
                 id: try EventID(validating: "event-\(Self.digest("speaker|\(rawSessionID)|\(descriptor.id)"))-upsert"),
                 occurredAt: now,
                 recordedAt: now,
-                actor: systemActor,
-                payload: .speakerUpserted(ScoutCore.Speaker(
-                    id: speakerID,
-                    displayName: try NonEmptyString(validating: descriptor.displayName),
-                    role: try NonEmptyString(validating: descriptor.role),
-                    affiliation: descriptor.affiliation
-                ))
+                command: .sessionLifecycle(
+                    component: systemComponent,
+                    operation: .upsertSpeaker(ScoutCore.Speaker(
+                        id: speakerID,
+                        displayName: try NonEmptyString(validating: descriptor.displayName),
+                        role: try NonEmptyString(validating: descriptor.role),
+                        affiliation: descriptor.affiliation
+                    ))
+                )
             ))
         }
 
         if !additions.isEmpty {
             let expected = try Self.expectedVersion(before: additions[0])
-            let additionDigest = Self.digest(additions.map(\.id.rawValue).joined(separator: "|"))
+            let additionDigest = Self.digest(
+                additions.map(\.envelope.id.rawValue).joined(separator: "|")
+            )
             let key = try IdempotencyKey("prepare-session:\(rawSessionID):\(additionDigest)")
             _ = try await database.append(additions, expecting: expected, idempotencyKey: key)
         }
@@ -164,7 +205,7 @@ actor LiveEventJournal {
         startMilliseconds: Int64? = nil,
         endMilliseconds: Int64? = nil
     ) async throws -> FinalUtteranceReceipt {
-        await acquireOperationLock()
+        try await acquireOperationLock()
         defer { releaseOperationLock() }
         return try await recordFinalUtteranceLocked(
             sessionID: rawSessionID,
@@ -239,30 +280,34 @@ actor LiveEventJournal {
             id: utteranceEventID,
             occurredAt: relativeTime.endedAt,
             recordedAt: recordedAt,
-            actor: actor,
-            payload: .utteranceFinalized(Utterance(
-                id: utteranceID,
-                speakerID: speakerID,
-                startedAt: relativeTime.startedAt,
-                endedAt: relativeTime.endedAt,
-                text: normalizedText,
-                transcriptionConfidence: confidence,
-                languageCode: languageCode
-            ))
+            command: .capturePipeline(
+                component: try NonEmptyString(validating: "scout-macos-capture"),
+                operation: .finalizeUtterance(Utterance(
+                    id: utteranceID,
+                    speakerID: speakerID,
+                    startedAt: relativeTime.startedAt,
+                    endedAt: relativeTime.endedAt,
+                    text: normalizedText,
+                    transcriptionConfidence: confidence,
+                    languageCode: languageCode
+                ))
+            )
         )
         let evidenceEvent = try builder.seal(
             id: evidenceEventID,
             occurredAt: relativeTime.endedAt,
             recordedAt: recordedAt,
-            actor: try Self.systemActor(),
             causationID: utteranceEventID,
-            payload: .evidenceRecorded(Evidence(
-                id: evidenceID,
-                source: .utterance(utteranceID),
-                excerpt: normalizedText,
-                capturedAt: relativeTime.endedAt,
-                capturedBy: actor
-            ))
+            command: .capturePipeline(
+                component: try NonEmptyString(validating: "scout-macos-capture"),
+                operation: .recordEvidence(Evidence(
+                    id: evidenceID,
+                    source: .utterance(utteranceID),
+                    excerpt: normalizedText,
+                    capturedAt: relativeTime.endedAt,
+                    capturedBy: actor
+                ))
+            )
         )
 
         let key = try IdempotencyKey("finalize-utterance:\(rawSessionID):\(digest)")
@@ -318,7 +363,7 @@ actor LiveEventJournal {
         sessionID rawSessionID: String,
         image: PreparedImageEvidence
     ) async throws -> ImageEvidenceReceipt {
-        await acquireOperationLock()
+        try await acquireOperationLock()
         defer { releaseOperationLock() }
 
         let sessionID = try SessionID(validating: rawSessionID)
@@ -339,9 +384,11 @@ actor LiveEventJournal {
         let evidenceID = try EvidenceID(validating: "evidence-image-\(localDigest)")
         let eventID = try EventID(validating: "event-\(localDigest)-image-evidence")
         let mediaType = try NonEmptyString(validating: image.mimeType)
-        let excerpt = try NonEmptyString(
-            validating: "Imported visual evidence · normalized JPEG · \(image.pixelWidth)×\(image.pixelHeight) · \(image.byteCount) bytes"
-        )
+        let excerpt = try NonEmptyString(validating: Self.imageEvidenceExcerpt(
+            pixelWidth: image.pixelWidth,
+            pixelHeight: image.pixelHeight,
+            byteCount: image.byteCount
+        ))
         let source = EvidenceSource.image(AssetLocator(
             assetID: assetID,
             mediaType: mediaType,
@@ -363,6 +410,7 @@ actor LiveEventJournal {
                 evidenceID: evidenceID,
                 assetID: assetID,
                 assetSHA256: image.assetSHA256,
+                mediaType: image.mimeType,
                 pixelWidth: image.pixelWidth,
                 pixelHeight: image.pixelHeight,
                 byteCount: image.byteCount,
@@ -375,14 +423,16 @@ actor LiveEventJournal {
             id: eventID,
             occurredAt: timestamp,
             recordedAt: timestamp,
-            actor: try Self.systemActor(),
-            payload: .evidenceRecorded(Evidence(
-                id: evidenceID,
-                source: source,
-                excerpt: excerpt,
-                capturedAt: timestamp,
-                capturedBy: try Self.systemActor()
-            ))
+            command: .evidenceImport(
+                component: try NonEmptyString(validating: "scout-macos-image-import"),
+                operation: .record(Evidence(
+                    id: evidenceID,
+                    source: source,
+                    excerpt: excerpt,
+                    capturedAt: timestamp,
+                    capturedBy: try Self.systemActor()
+                ))
+            )
         )
         let receipts = try await database.append(
             [event],
@@ -397,6 +447,7 @@ actor LiveEventJournal {
             evidenceID: evidenceID,
             assetID: assetID,
             assetSHA256: image.assetSHA256,
+            mediaType: image.mimeType,
             pixelWidth: image.pixelWidth,
             pixelHeight: image.pixelHeight,
             byteCount: image.byteCount,
@@ -412,7 +463,7 @@ actor LiveEventJournal {
         evidence: ImageEvidenceReceipt,
         result: ImageObservationResult
     ) async throws -> ImageObservationReceipt {
-        await acquireOperationLock()
+        try await acquireOperationLock()
         defer { releaseOperationLock() }
 
         let sessionID = try SessionID(validating: rawSessionID)
@@ -435,11 +486,38 @@ actor LiveEventJournal {
         else {
             throw JournalError.missingModelInputBoundary
         }
+        let suppliedContentHash: ScoutCore.SHA256Digest
+        let suppliedMediaType: NonEmptyString
+        do {
+            suppliedContentHash = try ScoutCore.SHA256Digest(validating: evidence.assetSHA256)
+            suppliedMediaType = try NonEmptyString(validating: evidence.mediaType)
+        } catch {
+            throw JournalError.imageObservationConflict
+        }
+        let expectedExcerpt = Self.imageEvidenceExcerpt(
+            pixelWidth: evidence.pixelWidth,
+            pixelHeight: evidence.pixelHeight,
+            byteCount: evidence.byteCount
+        )
+        guard case let .image(persistedLocator) = persistedEvidence.source,
+              persistedLocator.assetID == evidence.assetID,
+              persistedLocator.mediaType == suppliedMediaType,
+              persistedLocator.contentHash == suppliedContentHash,
+              persistedLocator.page == nil,
+              persistedEvidence.excerpt?.rawValue == expectedExcerpt
+        else {
+            throw JournalError.imageObservationConflict
+        }
+
+        let verifiedAssetSHA256 = suppliedContentHash.rawValue
+        let verifiedPixelWidth = evidence.pixelWidth
+        let verifiedPixelHeight = evidence.pixelHeight
+        let verifiedByteCount = evidence.byteCount
 
         let receiptID = try ModelCallReceiptID(
             validating: "model-call-image-\(Self.digest("openai|\(rawSessionID)|\(result.modelCall.responseID)|\(result.modelCall.outputSHA256)"))"
         )
-        let receipt = try ModelCallReceipt(
+        let baseReceipt = try ModelCallReceipt(
             id: receiptID,
             provider: NonEmptyString(validating: "openai"),
             providerResponseID: NonEmptyString(validating: result.modelCall.responseID),
@@ -450,10 +528,10 @@ actor LiveEventJournal {
             model: NonEmptyString(validating: result.modelCall.model),
             outputHash: SHA256Digest(validating: result.modelCall.outputSHA256),
             metadata: [
-                "asset_sha256": .text(evidence.assetSHA256),
-                "byte_count": .integer(Int64(evidence.byteCount)),
-                "pixel_height": .integer(Int64(evidence.pixelHeight)),
-                "pixel_width": .integer(Int64(evidence.pixelWidth)),
+                "asset_sha256": .text(verifiedAssetSHA256),
+                "byte_count": .integer(Int64(verifiedByteCount)),
+                "pixel_height": .integer(Int64(verifiedPixelHeight)),
+                "pixel_width": .integer(Int64(verifiedPixelWidth)),
             ]
         )
         let proposals = try ImageObservationProjector().project(
@@ -461,114 +539,154 @@ actor LiveEventJournal {
             sessionID: rawSessionID,
             evidenceID: evidence.evidenceID,
             modelCallReceiptID: receiptID
-        )
+        ).sorted { $0.id < $1.id }
         guard let currentState = try await database.state(for: sessionID) else {
             throw JournalError.sessionNotPrepared
         }
         let persistedModelEvent = events.first(where: { event in
             guard case let .modelCallRecorded(existing) = event.payload else { return false }
-            return existing.id == receiptID
+            return existing.provider == baseReceipt.provider
+                && existing.providerResponseID == baseReceipt.providerResponseID
         })
         if let persistedModelEvent {
-            let persisted = persistedModelEvent
-            guard case let .modelCallRecorded(existing) = persisted.payload, existing == receipt else {
+            guard case let .modelCallRecorded(existingReceipt) = persistedModelEvent.payload,
+                  existingReceipt.id == receiptID,
+                  Self.sameModelProviderResponse(existingReceipt, baseReceipt),
+                  existingReceipt.derivedEventManifest != nil,
+                  let completed = currentState.completedDerivedEventProjections[
+                      persistedModelEvent.id
+                  ],
+                  completed.isComplete
+            else {
                 throw JournalError.imageObservationConflict
             }
-        }
-
-        var builder = try Self.builder(for: sessionID, existing: events)
-        let timestamp = Self.timestamp()
-        let modelEventID = try EventID(
-            validating: "event-model-image-\(Self.digest("\(rawSessionID)|\(result.modelCall.responseID)"))"
-        )
-        let modelActor = EventActor.model(ModelIdentity(
-            provider: try NonEmptyString(validating: "openai"),
-            model: try NonEmptyString(validating: result.modelCall.model),
-            operationVersion: try NonEmptyString(validating: result.modelCall.promptVersion)
-        ))
-        var additions: [ScoutEventEnvelope] = []
-        if persistedModelEvent == nil {
-            additions.append(try builder.seal(
-                id: modelEventID,
-                occurredAt: timestamp,
-                recordedAt: timestamp,
-                actor: modelActor,
-                causationID: inputEvent.id,
-                payload: .modelCallRecorded(receipt)
-            ))
-        }
-
-        var projectedObservations: [ScoutCore.VisualObservation] = []
-        for proposal in proposals {
-            if let existing = currentState.visualObservations[proposal.id] {
-                guard Self.sameVisualObservationProposal(existing, proposal) else {
-                    throw JournalError.imageObservationConflict
-                }
-                projectedObservations.append(existing)
-                continue
+            let existingObservations = currentState.visualObservations.values.filter {
+                $0.modelCallReceiptID == receiptID
             }
+            guard existingObservations.count == proposals.count,
+                  proposals.allSatisfy({ proposal in
+                      currentState.visualObservations[proposal.id].map {
+                          Self.sameVisualObservationProposal($0, proposal)
+                      } ?? false
+                  })
+            else {
+                throw JournalError.imageObservationConflict
+            }
+            builders[sessionID] = try Self.builder(for: sessionID, existing: events)
+            return ImageObservationReceipt(
+                modelCallReceiptID: receiptID,
+                committedModelBoundary: AppendReceipt(event: persistedModelEvent),
+                observations: existingObservations.sorted { $0.id < $1.id }
+            )
+        }
+
+        guard currentState.visualObservations.values.allSatisfy({
+            $0.modelCallReceiptID != receiptID
+        }) else {
+            // Schema v1.4 projections are indivisible. Never repair a receipt-less or partial
+            // provider projection by appending a remainder later.
+            throw JournalError.imageObservationConflict
+        }
+        guard let projectionBaseID = currentState.lastEventID,
+              let projectionBase = currentState.eventBoundaries[projectionBaseID]
+        else {
+            throw JournalError.invalidCommitBoundary
+        }
+
+        let plannedObservations = try proposals.map { proposal in
             let eventID = try EventID(
                 validating: "event-visual-proposal-\(Self.digest("\(rawSessionID)|\(proposal.id.rawValue)"))"
             )
+            return (eventID, proposal)
+        }
+        let manifest = try DerivedEventManifest.committing(
+            adapterID: NonEmptyString(validating: "scout-macos-image-observation"),
+            adapterVersion: NonEmptyString(validating: "image-observation.v1"),
+            projectionBase: projectionBase,
+            receiptID: receiptID,
+            outputHash: baseReceipt.outputHash,
+            entries: plannedObservations.map { eventID, proposal in
+                DerivedEventManifestEntry(
+                    eventID: eventID,
+                    payload: .visualObservationProposed(proposal)
+                )
+            }
+        )
+        let receipt = try Self.receipt(baseReceipt, attaching: manifest)
+        let modelEventID = try EventID(
+            validating: "event-model-image-\(Self.digest("\(rawSessionID)|\(result.modelCall.responseID)"))"
+        )
+        let modelIdentity = ModelIdentity(
+            provider: try NonEmptyString(validating: "openai"),
+            model: try NonEmptyString(validating: result.modelCall.model),
+            operationVersion: try NonEmptyString(validating: result.modelCall.promptVersion)
+        )
+        let modelValidator = try NonEmptyString(validating: "scout-macos-image-observation-validator")
+        var builder = try Self.builder(for: sessionID, existing: events)
+        let timestamp = Self.timestamp()
+        var additions: [ValidatedScoutEvent] = [try builder.seal(
+            id: modelEventID,
+            occurredAt: timestamp,
+            recordedAt: timestamp,
+            causationID: inputEvent.id,
+            command: .modelProjection(
+                validator: modelValidator,
+                model: modelIdentity,
+                operation: .recordCall(receipt)
+            )
+        )]
+        for (eventID, proposal) in plannedObservations {
+            guard currentState.visualObservations[proposal.id] == nil else {
+                throw JournalError.imageObservationConflict
+            }
             additions.append(try builder.seal(
                 id: eventID,
                 occurredAt: timestamp,
                 recordedAt: timestamp,
-                actor: modelActor,
                 correlationID: modelEventID,
                 causationID: modelEventID,
-                payload: .visualObservationProposed(proposal)
+                command: .modelProjection(
+                    validator: modelValidator,
+                    model: modelIdentity,
+                    operation: .proposeVisualObservation(proposal)
+                )
             ))
-            projectedObservations.append(proposal)
-        }
-
-        if additions.isEmpty {
-            guard let persistedModelEvent else {
-                throw JournalError.invalidCommitBoundary
-            }
-            builders[sessionID] = builder
-            return ImageObservationReceipt(
-                modelCallReceiptID: receiptID,
-                committedModelBoundary: AppendReceipt(event: persistedModelEvent),
-                observations: projectedObservations.sorted { $0.id < $1.id }
-            )
         }
 
         guard let first = additions.first else { throw JournalError.invalidCommitBoundary }
-        let additionDigest = Self.digest(additions.map(\.id.rawValue).joined(separator: "|"))
+        let additionDigest = Self.digest(
+            additions.map(\.envelope.id.rawValue).joined(separator: "|")
+        )
         let receipts = try await database.append(
             additions,
             expecting: try Self.expectedVersion(before: first),
-            idempotencyKey: try IdempotencyKey("image-observation-v2:\(rawSessionID):\(additionDigest)")
+            idempotencyKey: try IdempotencyKey(
+                "image-observation-v3:\(rawSessionID):\(additionDigest)"
+            )
         )
-        guard receipts.count == additions.count else {
+        guard receipts.count == additions.count,
+              let modelBoundary = receipts.first(where: { $0.eventID == modelEventID })
+        else {
             throw JournalError.invalidCommitBoundary
         }
         builders[sessionID] = builder
-        let modelBoundary: AppendReceipt
-        if let persistedModelEvent {
-            modelBoundary = AppendReceipt(event: persistedModelEvent)
-        } else if let boundary = receipts.first(where: { $0.eventID == modelEventID }) {
-            modelBoundary = boundary
-        } else {
-            throw JournalError.invalidCommitBoundary
-        }
         return ImageObservationReceipt(
             modelCallReceiptID: receiptID,
             committedModelBoundary: modelBoundary,
-            observations: projectedObservations.sorted { $0.id < $1.id }
+            observations: proposals
         )
     }
 
-    /// Records the local operator's explicit disposition before the evidence-layer UI changes.
-    /// Reviews are terminal and idempotent; confirmation never creates graph or claim events.
-    @discardableResult
-    func recordVisualObservationReview(
+    /// Resolves the exact canonical object revision to review before authentication begins.
+    ///
+    /// The journal lock is released when this method returns so the macOS authentication prompt
+    /// cannot stall transcript or evidence persistence.
+    func prepareVisualObservationReview(
         sessionID rawSessionID: String,
         observationID rawObservationID: String,
         disposition: VisualObservationDisposition
-    ) async throws -> VisualObservationReviewReceipt {
-        await acquireOperationLock()
+    ) async throws -> VisualObservationReviewPreparation {
+        try await acquireOperationLock()
         defer { releaseOperationLock() }
 
         let sessionID = try SessionID(validating: rawSessionID)
@@ -584,55 +702,293 @@ actor LiveEventJournal {
         if observation.status != .proposed {
             let expected: VisualObservationStatus = disposition == .confirmed ? .confirmed : .rejected
             guard observation.status == expected,
-                  let persisted = events.first(where: { event in
-                      guard case let .visualObservationReviewed(review) = event.payload else {
-                          return false
-                      }
-                      return review.observationID == observationID
-                          && review.disposition == disposition
-                  })
+                  let attestation = state.visualObservationReviewAttestations[observationID]
             else {
                 throw JournalError.visualObservationReviewConflict
             }
             builders[sessionID] = try Self.builder(for: sessionID, existing: events)
-            return VisualObservationReviewReceipt(
+            switch attestation {
+            case let .deviceOwnerAuthenticated(authorization):
+                guard let persisted = events.first(where: { $0.id == authorization.eventID }) else {
+                    throw JournalError.visualObservationReviewConflict
+                }
+                return .alreadyCommitted(VisualObservationReviewReceipt(
+                    observationID: observationID,
+                    disposition: disposition,
+                    committedReviewBoundary: AppendReceipt(event: persisted),
+                    canonicalState: state
+                ))
+
+            case .legacyUnattested:
+                let eventID = try EventID(
+                    validating: "event-visual-review-attestation-\(Self.digest("\(rawSessionID)|\(rawObservationID)|\(disposition.rawValue)"))"
+                )
+                let intent = try LocalReviewIntent.preparing(
+                    eventID: eventID,
+                    operation: .attestLegacyReview(LocalReviewAttested(
+                        target: .visualObservation(observationID)
+                    )),
+                    in: state
+                )
+                return .authorizationRequired(intent)
+            }
+        }
+
+        let eventID = try EventID(
+            validating: "event-visual-review-\(Self.digest("\(rawSessionID)|\(rawObservationID)|\(disposition.rawValue)"))"
+        )
+        let intent = try LocalReviewIntent.preparing(
+            eventID: eventID,
+            operation: .reviewVisualObservation(VisualObservationReviewed(
                 observationID: observationID,
                 disposition: disposition,
-                committedReviewBoundary: AppendReceipt(event: persisted)
-            )
+                reviewer: .localOperator
+            )),
+            in: state
+        )
+        builders[sessionID] = try Self.builder(for: sessionID, existing: events)
+        return .authorizationRequired(intent)
+    }
+
+    /// Commits a previously prepared review only after device-owner authentication succeeded.
+    /// The reducer rechecks the exact target revision after the journal lock is reacquired.
+    @discardableResult
+    func recordVisualObservationReview(
+        sessionID rawSessionID: String,
+        authenticatedReview: AuthenticatedLocalReview
+    ) async throws -> VisualObservationReviewReceipt {
+        try await acquireOperationLock()
+        defer { releaseOperationLock() }
+
+        try Task.checkCancellation()
+        let sessionID = try SessionID(validating: rawSessionID)
+        let database = try database()
+        let events = try await database.events(for: sessionID)
+        guard let state = try await database.state(for: sessionID) else {
+            throw JournalError.sessionNotPrepared
         }
 
         var builder = try Self.builder(for: sessionID, existing: events)
         let timestamp = Self.timestamp()
-        let eventID = try EventID(
-            validating: "event-visual-review-\(Self.digest("\(rawSessionID)|\(rawObservationID)|\(disposition.rawValue)"))"
-        )
-        let event = try builder.seal(
-            id: eventID,
-            occurredAt: timestamp,
-            recordedAt: timestamp,
-            actor: .system(component: try NonEmptyString(validating: "scout-macos-review-ui")),
-            payload: .visualObservationReviewed(VisualObservationReviewed(
-                observationID: observationID,
-                disposition: disposition,
-                reviewer: .localOperator
-            ))
-        )
+        let event: ValidatedScoutEvent
+        do {
+            event = try builder.seal(
+                occurredAt: timestamp,
+                recordedAt: timestamp,
+                authenticatedReview: authenticatedReview
+            )
+        } catch is LocalReviewAuthorizationError {
+            throw JournalError.invalidReviewAuthorization
+        }
+
+        let observationID: VisualObservationID
+        let disposition: VisualObservationDisposition
+        switch event.envelope.payload {
+        case let .visualObservationReviewed(review):
+            observationID = review.observationID
+            disposition = review.disposition
+            guard state.visualObservations[observationID]?.status == .proposed else {
+                throw JournalError.visualObservationReviewConflict
+            }
+
+        case let .localReviewAttested(attestation):
+            guard case let .visualObservation(id) = attestation.target,
+                  let observation = state.visualObservations[id],
+                  case .legacyUnattested? = state.visualObservationReviewAttestations[id]
+            else {
+                throw JournalError.invalidReviewAuthorization
+            }
+            observationID = id
+            switch observation.status {
+            case .confirmed: disposition = .confirmed
+            case .rejected: disposition = .rejected
+            case .proposed: throw JournalError.visualObservationReviewConflict
+            }
+
+        default:
+            throw JournalError.invalidReviewAuthorization
+        }
+
+        try Task.checkCancellation()
         let receipts = try await database.append(
             [event],
             expecting: try Self.expectedVersion(before: event),
             idempotencyKey: try IdempotencyKey(
-                "visual-review:\(rawSessionID):\(rawObservationID):\(disposition.rawValue)"
+                "visual-review-v3:\(rawSessionID):\(event.envelope.id.rawValue)"
             )
         )
-        guard receipts.count == 1, let boundary = receipts.first, boundary.eventID == eventID else {
+        guard receipts.count == 1,
+              let boundary = receipts.first,
+              boundary.eventID == event.envelope.id
+        else {
             throw JournalError.invalidCommitBoundary
+        }
+        guard let canonicalState = try await database.state(for: sessionID) else {
+            throw JournalError.sessionNotPrepared
         }
         builders[sessionID] = builder
         return VisualObservationReviewReceipt(
             observationID: observationID,
             disposition: disposition,
-            committedReviewBoundary: boundary
+            committedReviewBoundary: boundary,
+            canonicalState: canonicalState
+        )
+    }
+
+    /// Resolves either a new terminal claim decision or an append-only attestation of the exact
+    /// legacy decision currently in canonical state. Authentication always happens after this
+    /// method releases the journal lock.
+    func prepareClaimReview(
+        sessionID rawSessionID: String,
+        claimID rawClaimID: String,
+        status: ClaimStatus
+    ) async throws -> ClaimReviewPreparation {
+        try await acquireOperationLock()
+        defer { releaseOperationLock() }
+
+        guard status == .accepted || status == .rejected else {
+            throw JournalError.claimReviewConflict
+        }
+        let sessionID = try SessionID(validating: rawSessionID)
+        let claimID = try ClaimID(validating: rawClaimID)
+        let database = try database()
+        let events = try await database.events(for: sessionID)
+        guard let state = try await database.state(for: sessionID),
+              let claim = state.claims[claimID]
+        else {
+            throw JournalError.missingClaim
+        }
+
+        builders[sessionID] = try Self.builder(for: sessionID, existing: events)
+        if claim.status != .proposed {
+            guard claim.status == status,
+                  let attestation = state.claimReviewAttestations[claimID]
+            else {
+                throw JournalError.claimReviewConflict
+            }
+            switch attestation {
+            case let .deviceOwnerAuthenticated(authorization):
+                guard let persisted = events.first(where: { $0.id == authorization.eventID }) else {
+                    throw JournalError.claimReviewConflict
+                }
+                return .alreadyCommitted(ClaimReviewReceipt(
+                    claimID: claimID,
+                    status: status,
+                    committedReviewBoundary: AppendReceipt(event: persisted),
+                    canonicalState: state
+                ))
+
+            case .legacyUnattested:
+                let eventID = try EventID(
+                    validating: "event-claim-review-attestation-\(Self.digest("\(rawSessionID)|\(rawClaimID)|\(status.rawValue)"))"
+                )
+                return .authorizationRequired(try LocalReviewIntent.preparing(
+                    eventID: eventID,
+                    operation: .attestLegacyReview(LocalReviewAttested(
+                        target: .claim(claimID)
+                    )),
+                    in: state
+                ))
+            }
+        }
+
+        let validationStatus: ValidationStatus = status == .accepted ? .validated : .rejected
+        let eventID = try EventID(
+            validating: "event-claim-review-\(Self.digest("\(rawSessionID)|\(rawClaimID)|\(status.rawValue)"))"
+        )
+        let operation = LocalReviewOperation.reviewClaim(ClaimReviewed(
+            claimID: claimID,
+            status: status,
+            trust: TrustAssessment(
+                origin: .confirmed,
+                confidence: claim.trust.confidence,
+                validationStatus: validationStatus,
+                rationale: claim.trust.rationale
+            )
+        ))
+        return .authorizationRequired(try LocalReviewIntent.preparing(
+            eventID: eventID,
+            operation: operation,
+            in: state
+        ))
+    }
+
+    /// Commits a prepared claim review or legacy re-attestation and returns only replayed canonical
+    /// state for application projection.
+    @discardableResult
+    func recordClaimReview(
+        sessionID rawSessionID: String,
+        authenticatedReview: AuthenticatedLocalReview
+    ) async throws -> ClaimReviewReceipt {
+        try await acquireOperationLock()
+        defer { releaseOperationLock() }
+
+        try Task.checkCancellation()
+        let sessionID = try SessionID(validating: rawSessionID)
+        let database = try database()
+        let events = try await database.events(for: sessionID)
+        guard let state = try await database.state(for: sessionID) else {
+            throw JournalError.sessionNotPrepared
+        }
+        var builder = try Self.builder(for: sessionID, existing: events)
+        let timestamp = Self.timestamp()
+        let event: ValidatedScoutEvent
+        do {
+            event = try builder.seal(
+                occurredAt: timestamp,
+                recordedAt: timestamp,
+                authenticatedReview: authenticatedReview
+            )
+        } catch is LocalReviewAuthorizationError {
+            throw JournalError.invalidReviewAuthorization
+        }
+
+        let claimID: ClaimID
+        let status: ClaimStatus
+        switch event.envelope.payload {
+        case let .claimReviewed(review):
+            claimID = review.claimID
+            status = review.status
+            guard state.claims[claimID]?.status == .proposed else {
+                throw JournalError.claimReviewConflict
+            }
+
+        case let .localReviewAttested(attestation):
+            guard case let .claim(id) = attestation.target,
+                  let claim = state.claims[id],
+                  claim.status == .accepted || claim.status == .rejected,
+                  case .legacyUnattested? = state.claimReviewAttestations[id]
+            else {
+                throw JournalError.invalidReviewAuthorization
+            }
+            claimID = id
+            status = claim.status
+
+        default:
+            throw JournalError.invalidReviewAuthorization
+        }
+
+        try Task.checkCancellation()
+        let receipts = try await database.append(
+            [event],
+            expecting: try Self.expectedVersion(before: event),
+            idempotencyKey: try IdempotencyKey(
+                "claim-review-v1:\(rawSessionID):\(event.envelope.id.rawValue)"
+            )
+        )
+        guard receipts.count == 1,
+              let boundary = receipts.first,
+              boundary.eventID == event.envelope.id,
+              let canonicalState = try await database.state(for: sessionID)
+        else {
+            throw JournalError.invalidCommitBoundary
+        }
+        builders[sessionID] = builder
+        return ClaimReviewReceipt(
+            claimID: claimID,
+            status: status,
+            committedReviewBoundary: boundary,
+            canonicalState: canonicalState
         )
     }
 
@@ -644,7 +1000,7 @@ actor LiveEventJournal {
     /// successfully replayed it. Callers receive no mutable store handles and may discard the
     /// projection at any time.
     func latestReplayState() async throws -> ScoutState? {
-        await acquireOperationLock()
+        try await acquireOperationLock()
         defer { releaseOperationLock() }
 
         let database = try database()
@@ -675,8 +1031,8 @@ actor LiveEventJournal {
     func recordClaimProjection(
         sessionID rawSessionID: String,
         projection: ClaimProposalProjection
-    ) async throws -> [AppendReceipt] {
-        await acquireOperationLock()
+    ) async throws -> ClaimProjectionCommitResult {
+        try await acquireOperationLock()
         defer { releaseOperationLock() }
 
         let sessionID = try SessionID(validating: rawSessionID)
@@ -694,32 +1050,58 @@ actor LiveEventJournal {
             throw JournalError.missingModelInputBoundary
         }
 
+        let existingProviderResponses = currentState.modelCallReceipts.values.filter {
+            $0.provider.rawValue == "openai"
+                && $0.providerResponseID.rawValue == projection.modelCall.responseID
+        }
+        if !existingProviderResponses.isEmpty {
+            guard existingProviderResponses.count == 1,
+                  let existingReceipt = existingProviderResponses.first
+            else {
+                throw ClaimProjectionCommitPlanningError.conflictingModelResponse(
+                    projection.modelCall.responseID
+                )
+            }
+            try verifyExactClaimProjectionRetry(
+                projection,
+                inputBoundary: inputBoundary,
+                existingReceipt: existingReceipt,
+                events: events,
+                currentState: currentState
+            )
+            builders[sessionID] = try Self.builder(for: sessionID, existing: events)
+            return ClaimProjectionCommitResult(
+                appendedEventBoundaries: [],
+                canonicalState: currentState
+            )
+        }
+
         let plan = try ClaimProjectionCommitPlanner().plan(
             projection,
             inputBoundary: inputBoundary,
             currentState: currentState
         )
-        guard !plan.isNoOp else {
-            builders[sessionID] = try Self.builder(for: sessionID, existing: events)
-            return []
-        }
 
         var builder = try Self.builder(for: sessionID, existing: events)
         let timestamp = Self.timestamp()
-        let actor = EventActor.model(ModelIdentity(
+        let modelIdentity = ModelIdentity(
             provider: try NonEmptyString(validating: "openai"),
             model: try NonEmptyString(validating: projection.modelCall.model),
             operationVersion: try NonEmptyString(validating: projection.modelCall.promptVersion)
-        ))
-        var additions: [ScoutEventEnvelope] = []
+        )
+        let modelValidator = try NonEmptyString(validating: "scout-macos-claim-projection-validator")
+        var additions: [ValidatedScoutEvent] = []
         if plan.shouldRecordModelCall {
             additions.append(try builder.seal(
                 id: plan.modelCallEventID,
                 occurredAt: timestamp,
                 recordedAt: timestamp,
-                actor: actor,
                 causationID: inputBoundary.id,
-                payload: .modelCallRecorded(plan.modelCallReceipt)
+                command: .modelProjection(
+                    validator: modelValidator,
+                    model: modelIdentity,
+                    operation: .recordCall(plan.modelCallReceipt)
+                )
             ))
         }
         for operation in plan.derivedEvents {
@@ -727,10 +1109,13 @@ actor LiveEventJournal {
                 id: operation.id,
                 occurredAt: timestamp,
                 recordedAt: timestamp,
-                actor: actor,
                 correlationID: plan.modelCallEventID,
                 causationID: plan.modelCallEventID,
-                payload: operation.payload
+                command: .modelProjection(
+                    validator: modelValidator,
+                    model: modelIdentity,
+                    operation: try Self.modelProjectionCommand(for: operation.payload)
+                )
             ))
         }
         guard let first = additions.first else {
@@ -751,18 +1136,126 @@ actor LiveEventJournal {
         guard receipts.count == additions.count else {
             throw JournalError.invalidCommitBoundary
         }
+        guard let canonicalState = try await database.state(for: sessionID) else {
+            throw JournalError.sessionNotPrepared
+        }
         builders[sessionID] = builder
-        return receipts
+        return ClaimProjectionCommitResult(
+            appendedEventBoundaries: receipts,
+            canonicalState: canonicalState
+        )
     }
 
-    private func acquireOperationLock() async {
+    /// A retry is safe only when the incoming projection regenerates the exact manifest-bearing
+    /// plan from the original projection base and those exact events completed in the log.
+    private func verifyExactClaimProjectionRetry(
+        _ projection: ClaimProposalProjection,
+        inputBoundary: ScoutEventEnvelope,
+        existingReceipt: ModelCallReceipt,
+        events: [ScoutEventEnvelope],
+        currentState: ScoutState
+    ) throws {
+        let conflict = ClaimProjectionCommitPlanningError.conflictingModelResponse(
+            projection.modelCall.responseID
+        )
+        guard let manifest = existingReceipt.derivedEventManifest,
+              let modelCallEventID = currentState.modelCallEvents.first(where: {
+                  $0.value == existingReceipt.id
+              })?.key,
+              let modelCallIndex = events.firstIndex(where: { $0.id == modelCallEventID }),
+              case let .modelCallRecorded(persistedReceipt) = events[modelCallIndex].payload,
+              persistedReceipt == existingReceipt,
+              let projectionBaseIndex = events.firstIndex(where: {
+                  ModelInputEventBoundary($0) == manifest.projectionBase
+              }),
+              projectionBaseIndex < modelCallIndex,
+              let completed = currentState.completedDerivedEventProjections[modelCallEventID],
+              completed.receiptID == existingReceipt.id,
+              completed.modelCallEventID == modelCallEventID,
+              completed.manifest == manifest,
+              completed.isComplete
+        else {
+            throw conflict
+        }
+
+        let projectionBaseState: ScoutState
+        do {
+            projectionBaseState = try ScoutGraphReducer.replay(
+                Array(events.prefix(through: projectionBaseIndex))
+            )
+        } catch {
+            throw conflict
+        }
+
+        let regenerated: ClaimProjectionCommitPlan
+        do {
+            regenerated = try ClaimProjectionCommitPlanner().plan(
+                projection,
+                inputBoundary: inputBoundary,
+                currentState: projectionBaseState
+            )
+        } catch {
+            throw conflict
+        }
+
+        let derivedStart = modelCallIndex + 1
+        let derivedEnd = derivedStart + Int(manifest.eventCount)
+        guard regenerated.shouldRecordModelCall,
+              regenerated.modelCallEventID == modelCallEventID,
+              regenerated.modelCallReceipt == existingReceipt,
+              regenerated.derivedEvents.count == Int(manifest.eventCount),
+              derivedEnd <= events.endIndex
+        else {
+            throw conflict
+        }
+
+        let persistedDerivedEvents = events[derivedStart ..< derivedEnd]
+        guard zip(regenerated.derivedEvents, persistedDerivedEvents).allSatisfy({ planned, persisted in
+            planned.id == persisted.id
+                && planned.payload == persisted.payload
+                && persisted.correlationID == modelCallEventID
+                && persisted.causationID == modelCallEventID
+        }) else {
+            throw conflict
+        }
+    }
+
+    private func acquireOperationLock() async throws {
+        try Task.checkCancellation()
         if !operationIsLocked {
             operationIsLocked = true
             return
         }
-        await withCheckedContinuation { continuation in
-            operationWaiters.append(continuation)
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    operationWaiters.append(OperationWaiter(
+                        id: waiterID,
+                        continuation: continuation
+                    ))
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelOperationWaiter(waiterID) }
         }
+        do {
+            try Task.checkCancellation()
+        } catch {
+            // The lock may already have been handed to this waiter. Pass it on before propagating
+            // cancellation so no canceled task can strand the journal queue.
+            releaseOperationLock()
+            throw error
+        }
+    }
+
+    private func cancelOperationWaiter(_ id: UUID) {
+        guard let index = operationWaiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = operationWaiters.remove(at: index)
+        waiter.continuation.resume(throwing: CancellationError())
     }
 
     private func releaseOperationLock() {
@@ -770,7 +1263,7 @@ actor LiveEventJournal {
             operationIsLocked = false
             return
         }
-        operationWaiters.removeFirst().resume()
+        operationWaiters.removeFirst().continuation.resume()
     }
 
     private func database() throws -> SQLiteEventStore {
@@ -945,23 +1438,86 @@ actor LiveEventJournal {
             && existing.confidence == proposed.confidence
     }
 
-    private static func expectedVersion(before event: ScoutEventEnvelope) throws -> ExpectedStreamVersion {
+    private static func sameModelProviderResponse(
+        _ existing: ModelCallReceipt,
+        _ requested: ModelCallReceipt
+    ) -> Bool {
+        existing.id == requested.id
+            && existing.provider == requested.provider
+            && existing.providerResponseID == requested.providerResponseID
+            && existing.purpose == requested.purpose
+            && existing.inputBoundary == requested.inputBoundary
+            && existing.promptVersion == requested.promptVersion
+            && existing.outputSchemaVersion == requested.outputSchemaVersion
+            && existing.model == requested.model
+            && existing.outputHash == requested.outputHash
+            && existing.metadata == requested.metadata
+    }
+
+    private static func receipt(
+        _ base: ModelCallReceipt,
+        attaching manifest: DerivedEventManifest
+    ) throws -> ModelCallReceipt {
+        try ModelCallReceipt(
+            id: base.id,
+            provider: base.provider,
+            providerResponseID: base.providerResponseID,
+            purpose: base.purpose,
+            inputBoundary: base.inputBoundary,
+            promptVersion: base.promptVersion,
+            outputSchemaVersion: base.outputSchemaVersion,
+            model: base.model,
+            outputHash: base.outputHash,
+            derivedEventManifest: manifest,
+            metadata: base.metadata
+        )
+    }
+
+    private static func expectedVersion(before event: ValidatedScoutEvent) throws -> ExpectedStreamVersion {
+        let event = event.envelope
         if event.sequence.rawValue == 1 { return .empty }
         return .sequence(try EventSequence(event.sequence.rawValue - 1))
     }
 
     private static func timestamp(_ date: Date = .now) -> ScoutTimestamp {
-        ScoutTimestamp(millisecondsSinceUnixEpoch: Int64((date.timeIntervalSince1970 * 1_000).rounded()))
+        ScoutTimestamp(
+            millisecondsSinceUnixEpoch: Int64(
+                (date.timeIntervalSince1970 * 1_000).rounded(.down)
+            )
+        )
     }
 
     private static func systemActor() throws -> EventActor {
-        .system(component: try NonEmptyString(validating: "scout-macos"))
+        .system(component: try systemComponent())
+    }
+
+    private static func systemComponent() throws -> NonEmptyString {
+        try NonEmptyString(validating: "scout-macos")
+    }
+
+    private static func modelProjectionCommand(
+        for payload: ScoutEventPayload
+    ) throws -> ModelProjectionCommand {
+        switch payload {
+        case let .entityUpserted(entity): .upsertEntity(entity)
+        case let .claimProposed(claim): .proposeClaim(claim)
+        case let .relationshipUpserted(relationship): .upsertRelationship(relationship)
+        default: throw JournalError.invalidProjectionPlan
+        }
     }
 
     private static func digest(_ value: String) -> String {
         SHA256.hash(data: Data(value.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
+    }
+
+    private static func imageEvidenceExcerpt(
+        pixelWidth: Int,
+        pixelHeight: Int,
+        byteCount: Int
+    ) -> String {
+        "Imported visual evidence · normalized JPEG · \(pixelWidth)×\(pixelHeight) · \(byteCount) bytes"
     }
 
     private static func digest(_ value: Data) -> String {
@@ -990,6 +1546,9 @@ actor LiveEventJournal {
         case imageObservationConflict
         case missingVisualObservation
         case visualObservationReviewConflict
+        case missingClaim
+        case claimReviewConflict
+        case invalidReviewAuthorization
 
         var errorDescription: String? {
             switch self {
@@ -1019,6 +1578,12 @@ actor LiveEventJournal {
                 "The visual observation does not exist in this discovery session."
             case .visualObservationReviewConflict:
                 "This visual observation already has a different terminal review."
+            case .missingClaim:
+                "The claim does not exist in this discovery session."
+            case .claimReviewConflict:
+                "This claim already has a different terminal review."
+            case .invalidReviewAuthorization:
+                "Scout could not bind this authentication to the exact review decision."
             }
         }
     }

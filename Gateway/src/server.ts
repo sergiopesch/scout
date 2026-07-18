@@ -60,6 +60,7 @@ function defaultDependencies(config: GatewayConfig): GatewayDependencies {
             keyID: config.approvalKeyID,
             verificationKeys: config.approvalVerificationKeys,
           },
+      config.contextPackContainmentRoot,
     ),
   };
 }

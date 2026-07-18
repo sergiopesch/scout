@@ -5,20 +5,26 @@ struct TrustInspectorView: View {
     var compact = true
 
     var body: some View {
+        let selectedClaim = workspace.selectedClaim
+        let canonicalEvidenceIDs = workspace.selectedClaimCanonicalEvidenceIDs
+
         VStack(spacing: 0) {
             ScoutPanelHeader(eyebrow: "Trust layer", title: "Evidence inspector") {
-                Label("Source-linked", systemImage: "link.badge.plus")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(ScoutColors.mint)
+                canonicalEvidenceStatus(
+                    hasSelectedClaim: selectedClaim != nil,
+                    evidenceIDs: canonicalEvidenceIDs
+                )
+                .font(.system(size: 9, weight: .semibold))
+                .accessibilityIdentifier("scout.trustInspector.evidenceStatus")
             }
             .padding(.horizontal, ScoutSpacing.medium)
             .padding(.vertical, 11)
 
             Divider().overlay(ScoutColors.stroke)
 
-            if let claim = workspace.selectedClaim {
+            if let claim = selectedClaim {
                 ScrollView {
-                    claimContent(claim)
+                    claimContent(claim, canonicalEvidenceIDs: canonicalEvidenceIDs)
                         .padding(ScoutSpacing.medium)
                 }
             } else {
@@ -30,15 +36,48 @@ struct TrustInspectorView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .scoutPanel(emphasized: workspace.selectedClaim?.needsValidation == true)
+        .scoutPanel(emphasized: selectedClaim?.needsValidation == true)
         .accessibilityIdentifier("scout.trustInspector")
     }
 
-    private func claimContent(_ claim: TrustClaim) -> some View {
+    @ViewBuilder
+    private func canonicalEvidenceStatus(
+        hasSelectedClaim: Bool,
+        evidenceIDs: [String]
+    ) -> some View {
+        if !hasSelectedClaim {
+            Label("No claim selected", systemImage: "link")
+                .foregroundStyle(ScoutColors.secondaryText)
+        } else if evidenceIDs.isEmpty {
+            Label("Evidence unresolved", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(ScoutColors.gold)
+        } else {
+            Label(
+                evidenceIDs.count == 1
+                    ? "1 canonical source"
+                    : "\(evidenceIDs.count) canonical sources",
+                systemImage: "link.badge.plus"
+            )
+            .foregroundStyle(ScoutColors.mint)
+        }
+    }
+
+    private func claimContent(
+        _ claim: TrustClaim,
+        canonicalEvidenceIDs: [String]
+    ) -> some View {
         VStack(alignment: .leading, spacing: compact ? 12 : 16) {
             HStack(spacing: 10) {
                 EvidenceBadge(kind: claim.provenance)
-                if claim.needsValidation {
+                if claim.reviewStatus == .accepted {
+                    Label("Accepted", systemImage: "checkmark.shield.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(ScoutColors.mint)
+                } else if claim.reviewStatus == .legacyAccepted {
+                    Label("Legacy acceptance", systemImage: "exclamationmark.shield")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(ScoutColors.gold)
+                } else {
                     Label("Needs validation", systemImage: "exclamationmark.circle")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(ScoutColors.gold)
@@ -94,17 +133,145 @@ struct TrustInspectorView: View {
                     .padding(.vertical, 8)
             }
 
-            sourceChain
+            if canonicalEvidenceIDs.isEmpty {
+                unresolvedEvidenceNotice
+            } else {
+                sourceChain
+            }
 
             if let provenance = workspace.claimProvenanceByID[claim.id] {
-                modelReceipt(provenance)
+                modelReceipt(provenance, canonicalEvidenceIDs: canonicalEvidenceIDs)
             }
+
+            claimReviewControls(claim)
 
             if !compact {
                 trustLegend
             }
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private var unresolvedEvidenceNotice: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label("Canonical evidence unresolved", systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 8, weight: .bold, design: .rounded))
+                .foregroundStyle(ScoutColors.gold)
+            Text("No immutable evidence ID resolves for this claim. Treat the excerpt as context only until canonical replay restores the link.")
+                .font(.system(size: 8, weight: .medium))
+                .foregroundStyle(ScoutColors.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ScoutColors.gold.opacity(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(ScoutColors.gold.opacity(0.22), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("scout.trustInspector.evidenceUnresolved")
+    }
+
+    @ViewBuilder
+    private func claimReviewControls(_ claim: TrustClaim) -> some View {
+        let isReviewing = workspace.reviewingClaimIDs.contains(claim.id)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Text("CLAIM REVIEW")
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .tracking(0.9)
+                    .foregroundStyle(ScoutColors.secondaryText)
+                Spacer()
+                Text(reviewStatusLabel(claim.reviewStatus))
+                    .font(.system(size: 7, weight: .bold, design: .rounded))
+                    .foregroundStyle(reviewStatusColor(claim.reviewStatus))
+            }
+
+            if isReviewing {
+                HStack(spacing: 7) {
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text(
+                        claim.reviewStatus == .legacyAccepted
+                            ? "Authenticating acceptance…"
+                            : "Saving claim review…"
+                    )
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(ScoutColors.secondaryText)
+                }
+            } else {
+                switch claim.reviewStatus {
+                case .proposed:
+                    HStack(spacing: 7) {
+                        Button("Accept claim") {
+                            workspace.acceptClaim(claim.id)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .tint(ScoutColors.mint)
+                        .foregroundStyle(ScoutColors.canvas)
+                        .accessibilityIdentifier("scout.claim.accept.\(claim.id)")
+
+                        Button("Reject claim") {
+                            workspace.rejectClaim(claim.id)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(ScoutColors.coral)
+                        .accessibilityIdentifier("scout.claim.reject.\(claim.id)")
+                    }
+
+                case .legacyAccepted:
+                    Button("Re-authenticate acceptance") {
+                        workspace.reattestClaimAcceptance(claim.id)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(ScoutColors.gold)
+                    .foregroundStyle(ScoutColors.canvas)
+                    .accessibilityIdentifier("scout.claim.reattest.\(claim.id)")
+
+                case .accepted:
+                    Text("Device-owner authentication is recorded in the canonical event history.")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundStyle(ScoutColors.secondaryText)
+                }
+            }
+
+            if let error = workspace.claimReviewError,
+               error.claimID == claim.id {
+                Label(error.message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(ScoutColors.coral)
+                    .accessibilityIdentifier("scout.claim.reviewError.\(claim.id)")
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            reviewStatusColor(claim.reviewStatus).opacity(0.06),
+            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(reviewStatusColor(claim.reviewStatus).opacity(0.22), lineWidth: 1)
+        )
+    }
+
+    private func reviewStatusLabel(_ status: ClaimReviewStatus) -> String {
+        switch status {
+        case .proposed: "AWAITING REVIEW"
+        case .accepted: "AUTHENTICATED ACCEPTANCE"
+        case .legacyAccepted: "LEGACY · RE-AUTH REQUIRED"
+        }
+    }
+
+    private func reviewStatusColor(_ status: ClaimReviewStatus) -> Color {
+        switch status {
+        case .proposed, .legacyAccepted: ScoutColors.gold
+        case .accepted: ScoutColors.mint
+        }
     }
 
     private var sourceChain: some View {
@@ -125,7 +292,10 @@ struct TrustInspectorView: View {
         }
     }
 
-    private func modelReceipt(_ provenance: ClaimProjectionProvenance) -> some View {
+    private func modelReceipt(
+        _ provenance: ClaimProjectionProvenance,
+        canonicalEvidenceIDs: [String]
+    ) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text("MODEL RECEIPT")
                 .font(.system(size: 8, weight: .bold, design: .rounded))
@@ -139,7 +309,12 @@ struct TrustInspectorView: View {
             }
             Text("Response \(Self.short(provenance.modelCall.responseID)) · output \(Self.short(provenance.modelCall.outputSHA256))")
                 .fontDesign(.monospaced)
-            Text("\(provenance.evidenceIDs.count) immutable evidence \(provenance.evidenceIDs.count == 1 ? "record" : "records")")
+            if canonicalEvidenceIDs.isEmpty {
+                Label("Canonical evidence IDs unresolved", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(ScoutColors.gold)
+            } else {
+                Text("\(canonicalEvidenceIDs.count) resolved immutable evidence \(canonicalEvidenceIDs.count == 1 ? "record" : "records")")
+            }
         }
         .font(.system(size: 8, weight: .medium))
         .foregroundStyle(ScoutColors.secondaryText)
@@ -213,28 +388,43 @@ struct EvidenceWorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            HStack(spacing: 10) {
-                EvidenceMetricCard(symbol: "link", value: "\(workspace.claims.count)", label: "source-linked claims", tint: ScoutColors.cyan)
-                EvidenceMetricCard(symbol: "checkmark.shield", value: "\(Int(workspace.evidenceCoverage * 100))%", label: "graph coverage", tint: ScoutColors.mint)
-                EvidenceMetricCard(symbol: "chart.bar.fill", value: "\(Int(workspace.averageConfidence * 100))%", label: "mean confidence", tint: ScoutColors.blue)
-                EvidenceMetricCard(symbol: "exclamationmark.bubble", value: "\(workspace.claims.filter(\.needsValidation).count)", label: "needs validation", tint: ScoutColors.gold)
+            ViewThatFits(in: .horizontal) {
+                evidenceMetrics(columnCount: 4)
+                    .frame(minWidth: 720)
+                evidenceMetrics(columnCount: 2)
             }
 
-            HStack(spacing: 12) {
+            HSplitView {
                 ClaimsListView(workspace: workspace)
-                    .frame(minWidth: 430, maxWidth: .infinity, maxHeight: .infinity)
-                VStack(spacing: 12) {
-                    TrustInspectorView(workspace: workspace, compact: false)
-                        .frame(minHeight: 300, maxHeight: .infinity)
-                    VisualEvidencePanel(workspace: workspace)
-                        .frame(minHeight: 190, idealHeight: 245, maxHeight: 310)
-                }
-                .frame(minWidth: 360, idealWidth: 430, maxWidth: 500, maxHeight: .infinity)
+                    .frame(minWidth: 390, idealWidth: 620, maxWidth: .infinity, maxHeight: .infinity)
+
+                VisualEvidencePanel(workspace: workspace)
+                    .frame(minWidth: 310, idealWidth: 390, maxWidth: 480, maxHeight: .infinity)
             }
         }
         .padding(14)
-        .background(ScoutColors.canvas)
+        .background(Color.clear)
         .accessibilityIdentifier("scout.evidenceWorkspace")
+    }
+
+    private func evidenceMetrics(columnCount: Int) -> some View {
+        let canonicallyLinkedClaimCount = workspace.claims.filter {
+            !workspace.canonicalEvidenceIDs(forClaimID: $0.id).isEmpty
+        }.count
+        let unresolvedEvidenceClaimCount = workspace.claims.count - canonicallyLinkedClaimCount
+
+        return LazyVGrid(
+            columns: Array(
+                repeating: GridItem(.flexible(minimum: 150), spacing: 10),
+                count: columnCount
+            ),
+            spacing: 10
+        ) {
+            EvidenceMetricCard(symbol: "link", value: "\(canonicallyLinkedClaimCount)", label: "canonically linked", tint: ScoutColors.cyan)
+            EvidenceMetricCard(symbol: "checkmark.shield", value: "\(Int(workspace.evidenceCoverage * 100))%", label: "graph coverage", tint: ScoutColors.mint)
+            EvidenceMetricCard(symbol: "exclamationmark.triangle", value: "\(unresolvedEvidenceClaimCount)", label: "evidence unresolved", tint: ScoutColors.gold)
+            EvidenceMetricCard(symbol: "exclamationmark.bubble", value: "\(workspace.claims.filter(\.needsValidation).count)", label: "needs validation", tint: ScoutColors.gold)
+        }
     }
 }
 
@@ -284,9 +474,7 @@ private struct ClaimsListView: View {
                 LazyVStack(spacing: 8) {
                     ForEach(workspace.claims.reversed()) { claim in
                         Button {
-                            if let id = claim.relatedEntityID {
-                                workspace.selectEntity(id)
-                            }
+                            workspace.selectClaim(claim.id)
                         } label: {
                             HStack(alignment: .top, spacing: 11) {
                                 Image(systemName: claim.provenance.symbol)
@@ -323,12 +511,12 @@ private struct ClaimsListView: View {
                             }
                             .padding(11)
                             .background(
-                                workspace.selectedClaim?.id == claim.id ? claim.provenance.color.opacity(0.08) : Color.white.opacity(0.025),
+                                workspace.selectedClaimID == claim.id ? claim.provenance.color.opacity(0.08) : Color.white.opacity(0.025),
                                 in: RoundedRectangle(cornerRadius: 11, style: .continuous)
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                    .stroke(workspace.selectedClaim?.id == claim.id ? claim.provenance.color.opacity(0.34) : ScoutColors.stroke, lineWidth: 1)
+                                    .stroke(workspace.selectedClaimID == claim.id ? claim.provenance.color.opacity(0.34) : ScoutColors.stroke, lineWidth: 1)
                             )
                         }
                         .buttonStyle(.plain)

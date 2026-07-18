@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import LocalAuthentication
 import Darwin
 
 private enum LauncherFailure: LocalizedError {
@@ -16,6 +17,8 @@ private enum LauncherFailure: LocalizedError {
     case gatewayTimeout
     case invalidGatewayReadiness
     case smokeFailed(String)
+    case localAuthenticationUnavailable
+    case localAuthenticationFailed
 
     var errorDescription: String? {
         switch self {
@@ -45,6 +48,71 @@ private enum LauncherFailure: LocalizedError {
             "Scout Gateway emitted an invalid readiness event."
         case let .smokeFailed(message):
             "Packaged Scout smoke test failed: \(message)"
+        case .localAuthenticationUnavailable:
+            "Device-owner authentication is unavailable for this Scout security operation."
+        case .localAuthenticationFailed:
+            "Scout did not authenticate the local device owner for this security operation."
+        }
+    }
+}
+
+private final class LauncherAuthenticationContext: @unchecked Sendable {
+    let value = LAContext()
+
+    init() {
+        value.localizedCancelTitle = "Cancel"
+    }
+
+    func invalidate() {
+        value.invalidate()
+    }
+}
+
+private enum LauncherLocalAuthorization {
+    static func require(for arguments: [String]) async throws {
+        let context = LauncherAuthenticationContext()
+        var availabilityError: NSError?
+        guard context.value.canEvaluatePolicy(
+            .deviceOwnerAuthentication,
+            error: &availabilityError
+        ) else {
+            throw LauncherFailure.localAuthenticationUnavailable
+        }
+
+        let reason = authenticationReason(for: arguments)
+        let authenticated: Bool
+        do {
+            authenticated = try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                let result = try await context.value.evaluatePolicy(
+                    .deviceOwnerAuthentication,
+                    localizedReason: reason
+                )
+                try Task.checkCancellation()
+                return result
+            } onCancel: {
+                context.invalidate()
+            }
+        } catch is CancellationError {
+            throw LauncherFailure.localAuthenticationFailed
+        } catch {
+            throw LauncherFailure.localAuthenticationFailed
+        }
+        guard authenticated else { throw LauncherFailure.localAuthenticationFailed }
+    }
+
+    private static func authenticationReason(for arguments: [String]) -> String {
+        switch arguments {
+        case ["secrets", "export"]:
+            "Authenticate to use Scout's local development secret bridge."
+        case ["secrets", "import"]:
+            "Authenticate to import Scout secrets into this Keychain namespace."
+        case ["secrets", "rotate-approval"]:
+            "Authenticate to rotate Scout's context-pack approval key."
+        case ["secrets", "configure-openai"]:
+            "Authenticate to configure Scout's OpenAI credential."
+        default:
+            "Authenticate to change Scout's security configuration."
         }
     }
 }
@@ -351,27 +419,34 @@ private enum PackagedScoutLauncher {
         }
 
         let secrets = try ScoutSecrets.export(includeOpenAI: true)
+        guard let openAIAPIKey = secrets.openAIAPIKey,
+              let encodedVerificationKeys = String(
+                  data: try JSONEncoder().encode(secrets.verificationKeys),
+                  encoding: .utf8
+              )
+        else { throw LauncherFailure.invalidKeyring }
         let credentials = try LaunchCredentials.fresh()
         let dataRoot = try applicationSupportRoot()
         let contextPacks = dataRoot.appendingPathComponent("context-packs", isDirectory: true)
         try FileManager.default.createDirectory(at: contextPacks, withIntermediateDirectories: true)
 
-        var gatewayEnvironment = ProcessInfo.processInfo.environment
-        gatewayEnvironment["OPENAI_API_KEY"] = secrets.openAIAPIKey
-        gatewayEnvironment["SCOUT_GATEWAY_HOST"] = "127.0.0.1"
-        gatewayEnvironment["SCOUT_GATEWAY_PORT"] = "0"
-        gatewayEnvironment["SCOUT_GATEWAY_TOKEN"] = credentials.gatewayToken
-        gatewayEnvironment["SCOUT_APPROVAL_TOKEN"] = credentials.approvalToken
-        gatewayEnvironment["SCOUT_GATEWAY_INSTANCE_ID"] = credentials.instanceID
-        gatewayEnvironment["SCOUT_APPROVAL_HMAC_KEY"] = secrets.approvalKey
-        gatewayEnvironment["SCOUT_APPROVAL_KEY_ID"] = secrets.approvalKeyID
-        gatewayEnvironment["SCOUT_APPROVAL_VERIFICATION_KEYS"] = String(
-            data: try JSONEncoder().encode(secrets.verificationKeys),
-            encoding: .utf8
+        let gatewayEnvironment = LauncherSecurityPolicy.packagedGatewayEnvironment(
+            parent: ProcessInfo.processInfo.environment,
+            trustedValues: [
+                "OPENAI_API_KEY": openAIAPIKey,
+                "SCOUT_GATEWAY_HOST": "127.0.0.1",
+                "SCOUT_GATEWAY_PORT": "0",
+                "SCOUT_GATEWAY_TOKEN": credentials.gatewayToken,
+                "SCOUT_APPROVAL_TOKEN": credentials.approvalToken,
+                "SCOUT_GATEWAY_INSTANCE_ID": credentials.instanceID,
+                "SCOUT_APPROVAL_HMAC_KEY": secrets.approvalKey,
+                "SCOUT_APPROVAL_KEY_ID": secrets.approvalKeyID,
+                "SCOUT_APPROVAL_VERIFICATION_KEYS": encodedVerificationKeys,
+                "SCOUT_GATEWAY_ROOT": runtime.path,
+                "SCOUT_DATA_ROOT": dataRoot.path,
+                "SCOUT_CONTEXT_PACK_DIR": contextPacks.path,
+            ]
         )
-        gatewayEnvironment["SCOUT_GATEWAY_ROOT"] = runtime.path
-        gatewayEnvironment["SCOUT_DATA_ROOT"] = dataRoot.path
-        gatewayEnvironment["SCOUT_CONTEXT_PACK_DIR"] = contextPacks.path
 
         let stderrPipe = Pipe()
         let gateway = Process()
@@ -402,25 +477,34 @@ private enum PackagedScoutLauncher {
                 return gateway.terminationStatus == 0 || gateway.terminationReason == .uncaughtSignal ? 0 : gateway.terminationStatus
             }
 
-            var appEnvironment = ProcessInfo.processInfo.environment
-            appEnvironment["SCOUT_BRIDGE_URL"] = "http://127.0.0.1:\(ready.port)"
-            appEnvironment["SCOUT_GATEWAY_TOKEN"] = credentials.gatewayToken
-            appEnvironment["SCOUT_APPROVAL_TOKEN"] = credentials.approvalToken
-            appEnvironment["SCOUT_GATEWAY_INSTANCE_ID"] = credentials.instanceID
-            appEnvironment["SCOUT_GATEWAY_SUPERVISED"] = "1"
-            appEnvironment.removeValue(forKey: "OPENAI_API_KEY")
-            appEnvironment.removeValue(forKey: "SCOUT_APPROVAL_HMAC_KEY")
-            appEnvironment.removeValue(forKey: "SCOUT_APPROVAL_VERIFICATION_KEYS")
+            let appEnvironment = LauncherSecurityPolicy.packagedAppEnvironment(
+                parent: ProcessInfo.processInfo.environment,
+                trustedValues: [
+                    "SCOUT_BRIDGE_URL": "http://127.0.0.1:\(ready.port)",
+                    "SCOUT_GATEWAY_TOKEN": credentials.gatewayToken,
+                    "SCOUT_APPROVAL_TOKEN": credentials.approvalToken,
+                    "SCOUT_GATEWAY_INSTANCE_ID": credentials.instanceID,
+                    "SCOUT_GATEWAY_SUPERVISED": "1",
+                ]
+            )
 
             let app = Process()
             app.executableURL = uiExecutable
             app.environment = appEnvironment
             app.standardInput = FileHandle.nullDevice
             try app.run()
-            app.waitUntilExit()
-            if gateway.isRunning { gateway.terminate() }
-            gateway.waitUntilExit()
-            return app.terminationStatus
+            switch LauncherProcessSupervisor.firstExit(gateway: gateway, app: app) {
+            case .app:
+                if gateway.isRunning { gateway.terminate() }
+                gateway.waitUntilExit()
+                app.waitUntilExit()
+                return app.terminationStatus
+            case .gateway:
+                if app.isRunning { app.terminate() }
+                app.waitUntilExit()
+                gateway.waitUntilExit()
+                return gateway.terminationStatus == 0 ? 1 : gateway.terminationStatus
+            }
         } catch {
             if gateway.isRunning { gateway.terminate() }
             gateway.waitUntilExit()
@@ -542,8 +626,32 @@ private struct ScoutLauncherMain {
     static func main() async {
         do {
             let arguments = Array(CommandLine.arguments.dropFirst())
+#if SCOUT_SECRET_TOOL
+            let secretToolBuild = true
+#else
+            let secretToolBuild = false
+#endif
+#if SCOUT_ADHOC_PROVISIONING
+            let adHocProvisioningBuild = true
+#else
+            let adHocProvisioningBuild = false
+#endif
+            switch LauncherSecurityPolicy.commandAccess(
+                arguments: arguments,
+                secretToolBuild: secretToolBuild,
+                adHocProvisioningBuild: adHocProvisioningBuild
+            ) {
+            case .ordinary:
+                break
+            case .authenticationRequired:
+                try await LauncherLocalAuthorization.require(for: arguments)
+            case .unavailable:
+                throw LauncherFailure.invalidCommand
+            }
+
             let status: Int32
             switch arguments {
+#if SCOUT_SECRET_TOOL || SCOUT_ADHOC_PROVISIONING
             case ["secrets", "import"]:
                 let data = FileHandle.standardInput.readDataToEndOfFile()
                 guard let input = try? JSONDecoder().decode(SecretImport.self, from: data) else {
@@ -552,12 +660,12 @@ private struct ScoutLauncherMain {
                 try ScoutSecrets.importLegacy(input)
                 try writeJSON(ScoutSecrets.status())
                 status = 0
+#endif
+#if SCOUT_SECRET_TOOL
             case ["secrets", "export"]:
                 try writeJSON(ScoutSecrets.export(includeOpenAI: true))
                 status = 0
-            case ["secrets", "approval-export"]:
-                try writeJSON(ScoutSecrets.export(includeOpenAI: false))
-                status = 0
+#endif
             case ["secrets", "status"]:
                 try writeJSON(ScoutSecrets.status())
                 status = 0

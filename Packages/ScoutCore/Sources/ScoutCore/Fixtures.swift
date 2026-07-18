@@ -22,8 +22,14 @@ public enum ScoutFixtures {
     )
 
     public static func sampleEvents(includeSessionEnd: Bool = false) throws -> [ScoutEventEnvelope] {
+        try sampleValidatedEvents(includeSessionEnd: includeSessionEnd).map(\.envelope)
+    }
+
+    public static func sampleValidatedEvents(
+        includeSessionEnd: Bool = false
+    ) throws -> [ValidatedScoutEvent] {
         var chain = EventChainBuilder(sessionID: sessionID)
-        var events: [ScoutEventEnvelope] = []
+        var events: [ValidatedScoutEvent] = []
 
         func timestamp(_ offset: Int64) -> ScoutTimestamp {
             ScoutTimestamp(
@@ -31,38 +37,38 @@ public enum ScoutFixtures {
             )
         }
 
-        let systemActor = EventActor.system(component: text("scout-core-fixture"))
+        let systemComponent = text("scout-core-fixture")
+        let captureComponent = text("scout-core-fixture-capture")
+        let modelValidator = text("scout-core-fixture-model-validator")
         let speakerActor = EventActor.speaker(speakerID)
-        let modelActor = EventActor.model(ModelIdentity(
+        let modelIdentity = ModelIdentity(
             provider: text("openai"),
             model: text("gpt-fixture"),
             operationVersion: text("claim-extraction.v1")
-        ))
+        )
 
         events.append(try chain.seal(
             id: id("event-001"),
             occurredAt: timestamp(0),
             recordedAt: timestamp(1),
-            actor: systemActor,
-            payload: .sessionStarted(DiscoverySession(
+            command: .sessionLifecycle(component: systemComponent, operation: .start(DiscoverySession(
                 id: sessionID,
                 title: text("Acme Retail discovery"),
                 startedAt: timestamp(0)
-            ))
+            )))
         ))
 
         events.append(try chain.seal(
             id: id("event-002"),
             occurredAt: timestamp(100),
             recordedAt: timestamp(101),
-            actor: systemActor,
-            payload: .speakerUpserted(Speaker(
+            command: .sessionLifecycle(component: systemComponent, operation: .upsertSpeaker(Speaker(
                 id: speakerID,
                 displayName: text("Emma Lewis"),
                 role: text("VP, Digital Commerce"),
                 organization: text("Acme Retail"),
                 affiliation: .customer
-            ))
+            )))
         ))
 
         let quote = text(
@@ -72,8 +78,7 @@ public enum ScoutFixtures {
             id: id("event-003"),
             occurredAt: timestamp(200),
             recordedAt: timestamp(205),
-            actor: speakerActor,
-            payload: .utteranceFinalized(Utterance(
+            command: .capturePipeline(component: captureComponent, operation: .finalizeUtterance(Utterance(
                 id: utteranceID,
                 speakerID: speakerID,
                 startedAt: timestamp(200),
@@ -81,31 +86,29 @@ public enum ScoutFixtures {
                 text: quote,
                 transcriptionConfidence: try! Confidence(basisPoints: 9_650),
                 languageCode: "en-GB"
-            ))
+            )))
         ))
 
         events.append(try chain.seal(
             id: id("event-004"),
             occurredAt: timestamp(4_210),
             recordedAt: timestamp(4_220),
-            actor: systemActor,
             causationID: id("event-003"),
-            payload: .evidenceRecorded(Evidence(
+            command: .capturePipeline(component: captureComponent, operation: .recordEvidence(Evidence(
                 id: evidenceID,
                 source: .utterance(utteranceID),
                 excerpt: quote,
                 capturedAt: timestamp(4_210),
                 capturedBy: speakerActor
-            ))
+            )))
         ))
 
         events.append(try chain.seal(
             id: id("event-005"),
             occurredAt: timestamp(4_230),
             recordedAt: timestamp(4_240),
-            actor: systemActor,
             causationID: id("event-004"),
-            payload: .entityUpserted(GraphEntity(
+            command: .deterministicProjection(component: systemComponent, operation: .upsertEntity(GraphEntity(
                 id: customerDataEntityID,
                 kind: .dataAsset,
                 canonicalName: text("Customer data"),
@@ -113,32 +116,30 @@ public enum ScoutFixtures {
                 attributes: ["owner": .text("Digital Commerce")],
                 evidenceIDs: [evidenceID],
                 trust: heardTrust
-            ))
+            )))
         ))
 
         events.append(try chain.seal(
             id: id("event-006"),
             occurredAt: timestamp(4_250),
             recordedAt: timestamp(4_260),
-            actor: systemActor,
             causationID: id("event-004"),
-            payload: .entityUpserted(GraphEntity(
+            command: .deterministicProjection(component: systemComponent, operation: .upsertEntity(GraphEntity(
                 id: salesforceEntityID,
                 kind: .system,
                 canonicalName: text("Salesforce"),
                 attributes: ["category": .text("CRM")],
                 evidenceIDs: [evidenceID],
                 trust: heardTrust
-            ))
+            )))
         ))
 
         events.append(try chain.seal(
             id: id("event-007"),
             occurredAt: timestamp(4_270),
             recordedAt: timestamp(4_280),
-            actor: systemActor,
             causationID: id("event-004"),
-            payload: .claimProposed(Claim(
+            command: .deterministicProjection(component: systemComponent, operation: .proposeClaim(Claim(
                 id: claimID,
                 subject: .entity(customerDataEntityID),
                 predicate: .storesDataIn,
@@ -146,16 +147,17 @@ public enum ScoutFixtures {
                 assertedBy: speakerID,
                 evidenceIDs: [evidenceID],
                 trust: heardTrust
-            ))
+            )))
         ))
 
         events.append(try chain.seal(
             id: id("event-008"),
             occurredAt: timestamp(4_290),
             recordedAt: timestamp(4_300),
-            actor: systemActor,
             causationID: id("event-007"),
-            payload: .relationshipUpserted(GraphRelationship(
+            command: .deterministicProjection(
+                component: systemComponent,
+                operation: .upsertRelationship(GraphRelationship(
                 id: relationshipID,
                 sourceID: customerDataEntityID,
                 targetID: salesforceEntityID,
@@ -164,31 +166,59 @@ public enum ScoutFixtures {
                 claimIDs: [claimID],
                 evidenceIDs: [evidenceID],
                 trust: heardTrust
-            ))
+                ))
+            )
         ))
 
-        let inputBoundary = ModelInputEventBoundary(events[3])
+        let inputBoundary = ModelInputEventBoundary(events[3].envelope)
+        let outputHash = SHA256Digest.hash(Data("fixture-claim-proposal".utf8))
+        let baseReceipt = try ModelCallReceipt(
+            id: modelCallReceiptID,
+            provider: text("openai"),
+            providerResponseID: text("resp_fixture_claims_001"),
+            purpose: .claimExtraction,
+            inputBoundary: inputBoundary,
+            promptVersion: text("claim-extraction.v1"),
+            outputSchemaVersion: text("claim-proposals.v1"),
+            model: text("gpt-fixture"),
+            outputHash: outputHash,
+            metadata: [
+                "input_tokens": .integer(128),
+                "output_tokens": .integer(42),
+            ]
+        )
+        let projectionBase = ModelInputEventBoundary(events.last!.envelope)
+        let manifest = try DerivedEventManifest.committing(
+            adapterID: text("scout-fixture-claim-projection"),
+            adapterVersion: text("fixture.v1"),
+            projectionBase: projectionBase,
+            receiptID: baseReceipt.id,
+            outputHash: outputHash,
+            entries: []
+        )
+        let receipt = try ModelCallReceipt(
+            id: baseReceipt.id,
+            provider: baseReceipt.provider,
+            providerResponseID: baseReceipt.providerResponseID,
+            purpose: baseReceipt.purpose,
+            inputBoundary: baseReceipt.inputBoundary,
+            promptVersion: baseReceipt.promptVersion,
+            outputSchemaVersion: baseReceipt.outputSchemaVersion,
+            model: baseReceipt.model,
+            outputHash: baseReceipt.outputHash,
+            derivedEventManifest: manifest,
+            metadata: baseReceipt.metadata
+        )
         events.append(try chain.seal(
             id: id("event-009"),
             occurredAt: timestamp(4_310),
             recordedAt: timestamp(4_320),
-            actor: modelActor,
             causationID: inputBoundary.eventID,
-            payload: .modelCallRecorded(try ModelCallReceipt(
-                id: modelCallReceiptID,
-                provider: text("openai"),
-                providerResponseID: text("resp_fixture_claims_001"),
-                purpose: .claimExtraction,
-                inputBoundary: inputBoundary,
-                promptVersion: text("claim-extraction.v1"),
-                outputSchemaVersion: text("claim-proposals.v1"),
-                model: text("gpt-fixture"),
-                outputHash: SHA256Digest.hash(Data("fixture-claim-proposal".utf8)),
-                metadata: [
-                    "input_tokens": .integer(128),
-                    "output_tokens": .integer(42),
-                ]
-            ))
+            command: .modelProjection(
+                validator: modelValidator,
+                model: modelIdentity,
+                operation: .recordCall(receipt)
+            )
         ))
 
         if includeSessionEnd {
@@ -196,8 +226,10 @@ public enum ScoutFixtures {
                 id: id("event-010"),
                 occurredAt: timestamp(60_000),
                 recordedAt: timestamp(60_001),
-                actor: systemActor,
-                payload: .sessionEnded(SessionEnded(endedAt: timestamp(60_000)))
+                command: .sessionLifecycle(
+                    component: systemComponent,
+                    operation: .end(SessionEnded(endedAt: timestamp(60_000)))
+                )
             ))
         }
 

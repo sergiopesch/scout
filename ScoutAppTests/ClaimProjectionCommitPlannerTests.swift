@@ -30,10 +30,26 @@ final class ClaimProjectionCommitPlannerTests: XCTestCase {
         XCTAssertEqual(first.modelCallReceipt.provider.rawValue, "openai")
         XCTAssertEqual(first.modelCallReceipt.purpose, .claimExtraction)
         XCTAssertEqual(first.modelCallReceipt.outputHash.rawValue, String(repeating: "a", count: 64))
+        let manifest = try XCTUnwrap(first.modelCallReceipt.derivedEventManifest)
+        XCTAssertEqual(manifest.adapterID.rawValue, "scout-macos-claim-projection")
+        XCTAssertEqual(manifest.adapterVersion.rawValue, "claim-projection.v1")
+        XCTAssertEqual(manifest.projectionBase, ModelInputEventBoundary(fixture.boundary))
+        XCTAssertEqual(Int(manifest.eventCount), first.derivedEvents.count)
         XCTAssertEqual(
             first.derivedEvents.map(\.payload.kind),
             ["entity.upserted", "entity.upserted", "claim.proposed", "relationship.upserted"]
         )
+        let expectedManifest = try DerivedEventManifest.committing(
+            adapterID: manifest.adapterID,
+            adapterVersion: manifest.adapterVersion,
+            projectionBase: manifest.projectionBase,
+            receiptID: first.modelCallReceipt.id,
+            outputHash: first.modelCallReceipt.outputHash,
+            entries: first.derivedEvents.map {
+                DerivedEventManifestEntry(eventID: $0.id, payload: $0.payload)
+            }
+        )
+        XCTAssertEqual(manifest, expectedManifest)
         XCTAssertEqual(first.derivedEvents.map(\.id).count, Set(first.derivedEvents.map(\.id)).count)
         let proposedClaim = try XCTUnwrap(first.derivedEvents.compactMap { event -> ScoutCore.Claim? in
             guard case let .claimProposed(claim) = event.payload else { return nil }
@@ -73,7 +89,7 @@ final class ClaimProjectionCommitPlannerTests: XCTestCase {
         }
     }
 
-    func testRepeatingTheSameProviderResponseIsANoOp() throws {
+    func testPlannerCannotApproveARetryWithoutThePersistedEventPrefix() throws {
         let fixture = try makeInitialFixture()
         let projection = makeProjection(
             evidenceID: "evidence-1",
@@ -89,20 +105,21 @@ final class ClaimProjectionCommitPlannerTests: XCTestCase {
         )
         let committed = try apply(first, to: fixture.state)
 
-        let repeated = try planner.plan(
-            projection,
-            inputBoundary: fixture.boundary,
-            currentState: committed
-        )
-
-        XCTAssertTrue(repeated.isNoOp)
-        XCTAssertFalse(repeated.shouldRecordModelCall)
-        XCTAssertTrue(repeated.derivedEvents.isEmpty)
-        XCTAssertEqual(repeated.modelCallEventID, first.modelCallEventID)
-        XCTAssertEqual(repeated.modelCallReceipt, first.modelCallReceipt)
+        XCTAssertThrowsError(
+            try planner.plan(
+                projection,
+                inputBoundary: fixture.boundary,
+                currentState: committed
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ClaimProjectionCommitPlanningError,
+                .conflictingModelReceipt(first.modelCallReceipt.id)
+            )
+        }
     }
 
-    func testNewEvidenceNeverSupersedesAnAcceptedClaim() throws {
+    func testNewEvidenceNeverSupersedesADeterministicallyValidatedClaim() throws {
         let fixture = try makeInitialFixture()
         let planner = ClaimProjectionCommitPlanner()
         let initialProjection = makeProjection(
@@ -116,52 +133,78 @@ final class ClaimProjectionCommitPlannerTests: XCTestCase {
             inputBoundary: fixture.boundary,
             currentState: fixture.state
         )
-        var state = try apply(initialPlan, to: fixture.state)
-        let acceptedClaimID = try XCTUnwrap(initialPlan.derivedEvents.compactMap { event -> ClaimID? in
+        var state = fixture.state
+        for (index, entity) in initialPlan.derivedEvents.compactMap({ event -> ScoutCore.GraphEntity? in
+            guard case let .entityUpserted(entity) = event.payload else { return nil }
+            return entity
+        }).enumerated() {
+            (state, _) = try append(
+                .deterministicProjection(
+                    component: NonEmptyString(validating: "planner-test"),
+                    operation: .upsertEntity(entity)
+                ),
+                id: "event-protected-entity-\(index)",
+                to: state
+            )
+        }
+        let projectedClaim = try XCTUnwrap(initialPlan.derivedEvents.compactMap { event -> ScoutCore.Claim? in
             guard case let .claimProposed(claim) = event.payload else { return nil }
-            return claim.id
+            return claim
         }.first)
-
-        let acceptedTrust = try TrustAssessment(
+        let validatedTrust = try TrustAssessment(
             origin: .confirmed,
             confidence: .certain,
             validationStatus: .validated,
-            rationale: NonEmptyString(validating: "Accepted by a human reviewer.")
+            rationale: NonEmptyString(validating: "Validated by a deterministic trusted source.")
         )
         (state, _) = try append(
-            .claimReviewed(ClaimReviewed(
-                claimID: acceptedClaimID,
-                status: .accepted,
-                trust: acceptedTrust
-            )),
-            id: "event-accept-claim",
+            .deterministicProjection(
+                component: NonEmptyString(validating: "planner-test"),
+                operation: .proposeClaim(ScoutCore.Claim(
+                    id: projectedClaim.id,
+                    subject: projectedClaim.subject,
+                    predicate: projectedClaim.predicate,
+                    object: projectedClaim.object,
+                    assertedBy: projectedClaim.assertedBy,
+                    evidenceIDs: projectedClaim.evidenceIDs,
+                    trust: validatedTrust,
+                    status: .proposed
+                ))
+            ),
+            id: "event-validated-claim",
             to: state
         )
 
         let secondUtteranceID = try UtteranceID(validating: "utterance-2")
         let speakerID = try SpeakerID(validating: "speaker-customer")
         (state, _) = try append(
-            .utteranceFinalized(Utterance(
-                id: secondUtteranceID,
-                speakerID: speakerID,
-                startedAt: timestamp(2000),
-                endedAt: timestamp(2800),
-                text: NonEmptyString(validating: "Inventory is still stored in NetSuite."),
-                transcriptionConfidence: Confidence(basisPoints: 9800),
-                languageCode: "en-GB"
-            )),
+            .capturePipeline(
+                component: NonEmptyString(validating: "planner-test"),
+                operation: .finalizeUtterance(Utterance(
+                    id: secondUtteranceID,
+                    speakerID: speakerID,
+                    startedAt: timestamp(2000),
+                    endedAt: timestamp(2800),
+                    text: NonEmptyString(validating: "Inventory is still stored in NetSuite."),
+                    transcriptionConfidence: Confidence(basisPoints: 9800),
+                    languageCode: "en-GB"
+                ))
+            ),
             id: "event-utterance-2",
             to: state
         )
         let secondEvidenceID = try EvidenceID(validating: "evidence-2")
         let (stateWithEvidence, secondBoundary) = try append(
-            .evidenceRecorded(Evidence(
-                id: secondEvidenceID,
-                source: .utterance(secondUtteranceID),
-                excerpt: NonEmptyString(validating: "Inventory is still stored in NetSuite."),
-                capturedAt: timestamp(2900),
-                capturedBy: .speaker(speakerID)
-            )),
+            .capturePipeline(
+                component: NonEmptyString(validating: "planner-test"),
+                operation: .recordEvidence(Evidence(
+                    id: secondEvidenceID,
+                    source: .utterance(secondUtteranceID),
+                    excerpt: NonEmptyString(validating: "Inventory is still stored in NetSuite."),
+                    capturedAt: timestamp(2900),
+                    capturedBy: .speaker(speakerID)
+                ))
+            ),
             id: "event-evidence-2",
             to: state
         )
@@ -184,10 +227,12 @@ final class ClaimProjectionCommitPlannerTests: XCTestCase {
         }.first)
 
         XCTAssertNil(revisedClaim.supersedes)
-        XCTAssertNotEqual(revisedClaim.id, acceptedClaimID)
+        XCTAssertNotEqual(revisedClaim.id, projectedClaim.id)
 
         let finalState = try apply(revisedPlan, to: state)
-        XCTAssertEqual(finalState.claims[acceptedClaimID]?.status, .accepted)
+        XCTAssertEqual(finalState.claims[projectedClaim.id]?.status, .proposed)
+        XCTAssertEqual(finalState.claims[projectedClaim.id]?.trust.origin, .confirmed)
+        XCTAssertEqual(finalState.claims[projectedClaim.id]?.trust.validationStatus, .validated)
         XCTAssertEqual(finalState.claims[revisedClaim.id]?.status, .proposed)
     }
 
@@ -217,27 +262,33 @@ final class ClaimProjectionCommitPlannerTests: XCTestCase {
         let secondUtteranceID = try UtteranceID(validating: "utterance-scalar-2")
         let speakerID = try SpeakerID(validating: "speaker-customer")
         (state, _) = try append(
-            .utteranceFinalized(Utterance(
-                id: secondUtteranceID,
-                speakerID: speakerID,
-                startedAt: timestamp(30_000),
-                endedAt: timestamp(30_800),
-                text: NonEmptyString(validating: "The target is 97%."),
-                transcriptionConfidence: Confidence(basisPoints: 9_800),
-                languageCode: "en-GB"
-            )),
+            .capturePipeline(
+                component: NonEmptyString(validating: "planner-test"),
+                operation: .finalizeUtterance(Utterance(
+                    id: secondUtteranceID,
+                    speakerID: speakerID,
+                    startedAt: timestamp(30_000),
+                    endedAt: timestamp(30_800),
+                    text: NonEmptyString(validating: "The target is 97%."),
+                    transcriptionConfidence: Confidence(basisPoints: 9_800),
+                    languageCode: "en-GB"
+                ))
+            ),
             id: "event-utterance-scalar-2",
             to: state
         )
         let secondEvidenceID = try EvidenceID(validating: "evidence-scalar-2")
         let (stateWithEvidence, secondBoundary) = try append(
-            .evidenceRecorded(Evidence(
-                id: secondEvidenceID,
-                source: .utterance(secondUtteranceID),
-                excerpt: NonEmptyString(validating: "The target is 97%."),
-                capturedAt: timestamp(30_900),
-                capturedBy: .speaker(speakerID)
-            )),
+            .capturePipeline(
+                component: NonEmptyString(validating: "planner-test"),
+                operation: .recordEvidence(Evidence(
+                    id: secondEvidenceID,
+                    source: .utterance(secondUtteranceID),
+                    excerpt: NonEmptyString(validating: "The target is 97%."),
+                    capturedAt: timestamp(30_900),
+                    capturedBy: .speaker(speakerID)
+                ))
+            ),
             id: "event-evidence-scalar-2",
             to: state
         )
@@ -284,7 +335,7 @@ final class ClaimProjectionCommitPlannerTests: XCTestCase {
         let speakerID = try SpeakerID(validating: "speaker-customer")
         let utteranceID = try UtteranceID(validating: "utterance-1")
         let evidenceID = try EvidenceID(validating: "evidence-1")
-        let systemActor = try EventActor.system(component: NonEmptyString(validating: "planner-test"))
+        let component = try NonEmptyString(validating: "planner-test")
         var chain = EventChainBuilder(sessionID: sessionID)
         var events: [ScoutEventEnvelope] = []
 
@@ -292,54 +343,62 @@ final class ClaimProjectionCommitPlannerTests: XCTestCase {
             id: EventID(validating: "event-session"),
             occurredAt: timestamp(0),
             recordedAt: timestamp(0),
-            actor: systemActor,
-            payload: .sessionStarted(DiscoverySession(
-                id: sessionID,
-                title: NonEmptyString(validating: "Commit planner test"),
-                startedAt: timestamp(0)
-            ))
-        ))
+            command: .sessionLifecycle(
+                component: component,
+                operation: .start(DiscoverySession(
+                    id: sessionID,
+                    title: NonEmptyString(validating: "Commit planner test"),
+                    startedAt: timestamp(0)
+                ))
+            )
+        ).envelope)
         try events.append(chain.seal(
             id: EventID(validating: "event-speaker"),
             occurredAt: timestamp(100),
             recordedAt: timestamp(100),
-            actor: systemActor,
-            payload: .speakerUpserted(ScoutCore.Speaker(
-                id: speakerID,
-                displayName: NonEmptyString(validating: "Customer speaker"),
-                affiliation: .customer
-            ))
-        ))
+            command: .sessionLifecycle(
+                component: component,
+                operation: .upsertSpeaker(ScoutCore.Speaker(
+                    id: speakerID,
+                    displayName: NonEmptyString(validating: "Customer speaker"),
+                    affiliation: .customer
+                ))
+            )
+        ).envelope)
         try events.append(chain.seal(
             id: EventID(validating: "event-utterance-1"),
             occurredAt: timestamp(1000),
             recordedAt: timestamp(1100),
-            actor: .speaker(speakerID),
-            payload: .utteranceFinalized(Utterance(
-                id: utteranceID,
-                speakerID: speakerID,
-                startedAt: timestamp(1000),
-                endedAt: timestamp(1800),
-                text: NonEmptyString(validating: "NetSuite stores inventory."),
-                transcriptionConfidence: Confidence(basisPoints: 9700),
-                languageCode: "en-GB"
-            ))
-        ))
+            command: .capturePipeline(
+                component: component,
+                operation: .finalizeUtterance(Utterance(
+                    id: utteranceID,
+                    speakerID: speakerID,
+                    startedAt: timestamp(1000),
+                    endedAt: timestamp(1800),
+                    text: NonEmptyString(validating: "NetSuite stores inventory."),
+                    transcriptionConfidence: Confidence(basisPoints: 9700),
+                    languageCode: "en-GB"
+                ))
+            )
+        ).envelope)
         let boundary = try chain.seal(
             id: EventID(validating: "event-evidence-1"),
             occurredAt: timestamp(1900),
             recordedAt: timestamp(1900),
-            actor: .speaker(speakerID),
-            payload: .evidenceRecorded(Evidence(
-                id: evidenceID,
-                source: .utterance(utteranceID),
-                excerpt: NonEmptyString(validating: "NetSuite stores inventory."),
-                capturedAt: timestamp(1900),
-                capturedBy: .speaker(speakerID)
-            ))
+            command: .capturePipeline(
+                component: component,
+                operation: .recordEvidence(Evidence(
+                    id: evidenceID,
+                    source: .utterance(utteranceID),
+                    excerpt: NonEmptyString(validating: "NetSuite stores inventory."),
+                    capturedAt: timestamp(1900),
+                    capturedBy: .speaker(speakerID)
+                ))
+            )
         )
-        events.append(boundary)
-        return try Fixture(state: ScoutGraphReducer.replay(events), boundary: boundary)
+        events.append(boundary.envelope)
+        return try Fixture(state: ScoutGraphReducer.replay(events), boundary: boundary.envelope)
     }
 
     private func makeProjection(
@@ -458,19 +517,23 @@ final class ClaimProjectionCommitPlannerTests: XCTestCase {
             nextSequence: XCTUnwrap(state.lastSequence).successor(),
             previousHash: state.lastEventHash
         )
-        let actor = try EventActor.model(ModelIdentity(
+        let modelIdentity = try ModelIdentity(
             provider: NonEmptyString(validating: "openai"),
             model: NonEmptyString(validating: plan.modelCallReceipt.model.rawValue),
             operationVersion: NonEmptyString(validating: plan.modelCallReceipt.promptVersion.rawValue)
-        ))
+        )
+        let validator = try NonEmptyString(validating: "planner-test")
         if plan.shouldRecordModelCall {
             let event = try chain.seal(
                 id: plan.modelCallEventID,
                 occurredAt: timestamp(10000),
                 recordedAt: timestamp(10000),
-                actor: actor,
                 causationID: plan.modelCallReceipt.inputBoundary.eventID,
-                payload: .modelCallRecorded(plan.modelCallReceipt)
+                command: .modelProjection(
+                    validator: validator,
+                    model: modelIdentity,
+                    operation: .recordCall(plan.modelCallReceipt)
+                )
             )
             next = try ScoutGraphReducer.reduce(next, event: event)
         }
@@ -479,10 +542,13 @@ final class ClaimProjectionCommitPlannerTests: XCTestCase {
                 id: planned.id,
                 occurredAt: timestamp(10000),
                 recordedAt: timestamp(10000),
-                actor: actor,
                 correlationID: plan.modelCallEventID,
                 causationID: plan.modelCallEventID,
-                payload: planned.payload
+                command: .modelProjection(
+                    validator: validator,
+                    model: modelIdentity,
+                    operation: try modelOperation(for: planned.payload)
+                )
             )
             next = try ScoutGraphReducer.reduce(next, event: event)
         }
@@ -490,7 +556,7 @@ final class ClaimProjectionCommitPlannerTests: XCTestCase {
     }
 
     private func append(
-        _ payload: ScoutEventPayload,
+        _ command: ScoutEventCommand,
         id: String,
         to state: ScoutState
     ) throws -> (ScoutState, ScoutEventEnvelope) {
@@ -503,10 +569,24 @@ final class ClaimProjectionCommitPlannerTests: XCTestCase {
             id: EventID(validating: id),
             occurredAt: timestamp(20000),
             recordedAt: timestamp(20000),
-            actor: .system(component: NonEmptyString(validating: "planner-test")),
-            payload: payload
+            command: command
         )
-        return try (ScoutGraphReducer.reduce(state, event: event), event)
+        return try (ScoutGraphReducer.reduce(state, event: event), event.envelope)
+    }
+
+    private func modelOperation(for payload: ScoutEventPayload) throws -> ModelProjectionCommand {
+        switch payload {
+        case let .entityUpserted(entity):
+            .upsertEntity(entity)
+        case let .claimProposed(claim):
+            .proposeClaim(claim)
+        case let .relationshipUpserted(relationship):
+            .upsertRelationship(relationship)
+        default:
+            throw ClaimProjectionCommitPlanningError.stateTransitionRejected(
+                "Unexpected derived payload: \(payload.kind)"
+            )
+        }
     }
 
     private func timestamp(_ offset: Int64) -> ScoutTimestamp {

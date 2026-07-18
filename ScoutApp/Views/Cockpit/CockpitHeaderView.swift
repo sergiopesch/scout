@@ -2,39 +2,78 @@ import SwiftUI
 
 struct CockpitHeaderView: View {
     @Bindable var workspace: ScoutWorkspace
+    var showsDestinations = true
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: ScoutSpacing.large) {
-                sessionIdentity
-                Spacer(minLength: 20)
-                sessionMetrics
-                captureControls
-            }
-            .padding(.horizontal, ScoutSpacing.large)
-            .padding(.top, 14)
-            .padding(.bottom, 12)
-
-            HStack(spacing: 4) {
-                ForEach(WorkspaceDestination.allCases) { destination in
-                    destinationButton(destination)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: ScoutSpacing.large) {
+                    sessionIdentity
+                    Spacer(minLength: 20)
+                    sessionMetrics
+                    captureControls
                 }
-                Spacer()
-                Label("Every claim links to source", systemImage: "link")
+                .fixedSize(horizontal: true, vertical: false)
+
+                HStack(spacing: ScoutSpacing.medium) {
+                    sessionIdentity
+                        .layoutPriority(1)
+                    Spacer(minLength: 12)
+                    captureControls
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, ScoutSpacing.large)
+            .padding(.vertical, 10)
+
+            if showsDestinations {
+                HStack(spacing: 4) {
+                    ForEach(WorkspaceDestination.allCases) { destination in
+                        destinationButton(destination)
+                    }
+                    Spacer()
+                    HStack(spacing: 6) {
+                        ScoutBrandMark(size: 16)
+                        Text("Every claim links to source")
+                    }
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(ScoutColors.secondaryText)
-                if let liveError = workspace.liveError {
-                    Label(liveError, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(ScoutColors.coral)
-                        .lineLimit(1)
-                        .accessibilityIdentifier("scout.live.error")
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Scout trust policy: every claim links to source")
                 }
+                .padding(.horizontal, ScoutSpacing.large)
+                .padding(.bottom, 10)
             }
-            .padding(.horizontal, ScoutSpacing.large)
-            .padding(.bottom, 10)
+
+            // Trust failures belong to the capture surface, not to optional navigation chrome.
+            // Keep this visible in the production controller layout where destinations are hidden.
+            if let liveError = workspace.liveError {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .accessibilityHidden(true)
+                    Text(liveError)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(ScoutColors.coral)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(ScoutColors.coral.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(ScoutColors.coral.opacity(0.26), lineWidth: 1)
+                }
+                .padding(.horizontal, ScoutSpacing.large)
+                .padding(.bottom, 10)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Scout capture warning: \(liveError)")
+                .accessibilityIdentifier("scout.live.error")
+            }
         }
-        .background(ScoutColors.sidebar.opacity(0.92))
+        .background(.ultraThinMaterial)
+        .background(ScoutColors.graphiteMid.opacity(0.52))
         .overlay(alignment: .bottom) {
             Rectangle().fill(ScoutColors.stroke).frame(height: 1)
         }
@@ -55,11 +94,24 @@ struct CockpitHeaderView: View {
                     .font(.system(size: 9, weight: .bold, design: .rounded))
                     .tracking(1)
                     .foregroundStyle(workspace.captureState == .listening ? ScoutColors.mint : ScoutColors.gold)
+                if workspace.isDemoWorkspace {
+                    Label("FICTIONAL DEMO", systemImage: "theatermasks.fill")
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .tracking(0.8)
+                        .foregroundStyle(ScoutColors.gold)
+                        .padding(.horizontal, 7)
+                        .frame(height: 19)
+                        .background(ScoutColors.gold.opacity(0.10), in: Capsule())
+                        .overlay(Capsule().stroke(ScoutColors.gold.opacity(0.30), lineWidth: 1))
+                        .accessibilityLabel("Fictional demo data")
+                        .accessibilityIdentifier("scout.demo.badge")
+                }
             }
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(workspace.selectedSession.organization)
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundStyle(ScoutColors.primaryText)
+                    .lineLimit(1)
                 Text("/ \(workspace.selectedSession.title)")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(ScoutColors.secondaryText)
@@ -67,7 +119,11 @@ struct CockpitHeaderView: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(workspace.selectedSession.organization), \(workspace.selectedSession.title), \(workspace.captureState.label)")
+        .accessibilityLabel(
+            "\(workspace.selectedSession.organization), \(workspace.selectedSession.title), "
+                + "\(workspace.captureState.label)"
+                + (workspace.isDemoWorkspace ? ", fictional demo data" : "")
+        )
     }
 
     private var sessionMetrics: some View {

@@ -1,7 +1,9 @@
 * @sergiopesch
 
 /Packages/ScoutCore/ @sergiopesch
+/Packages/ScoutPersistence/ @sergiopesch
 /Gateway/src/context-packs.ts @sergiopesch
 /Tools/ScoutLauncher/ @sergiopesch
 /Packaging/ @sergiopesch
+/.github/ @sergiopesch
 /SECURITY.md @sergiopesch

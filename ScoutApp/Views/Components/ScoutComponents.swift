@@ -1,5 +1,18 @@
 import SwiftUI
 
+struct ScoutBrandMark: View {
+    var size: CGFloat = 32
+
+    var body: some View {
+        Image("ScoutMark")
+            .resizable()
+            .interpolation(.high)
+            .antialiased(true)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
 struct ScoutPanelHeader<Trailing: View>: View {
     let eyebrow: String?
     let title: String

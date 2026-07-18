@@ -4,29 +4,17 @@ struct DiscoveryCockpitView: View {
     @Bindable var workspace: ScoutWorkspace
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(spacing: 12) {
-                CustomerGraphView(workspace: workspace)
-                    .frame(minHeight: 330, maxHeight: .infinity)
-                    .layoutPriority(2)
-                LiveTranscriptView(workspace: workspace)
-                    .frame(minHeight: 210, idealHeight: 250, maxHeight: 290)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        VSplitView {
+            CustomerGraphView(workspace: workspace)
+                .frame(minHeight: 300, idealHeight: 470, maxHeight: .infinity)
+                .layoutPriority(2)
 
-            VStack(spacing: 12) {
-                TrustInspectorView(workspace: workspace)
-                    .frame(minHeight: 250, maxHeight: .infinity)
-                    .layoutPriority(2)
-                ProactiveQuestionsView(workspace: workspace)
-                    .frame(minHeight: 210, idealHeight: 245, maxHeight: 270)
-                QuickWinsSummaryView(workspace: workspace)
-                    .frame(minHeight: 108, idealHeight: 135, maxHeight: 155)
-            }
-            .frame(minWidth: 326, idealWidth: 350, maxWidth: 380, maxHeight: .infinity)
+            LiveTranscriptView(workspace: workspace)
+                .frame(minHeight: 190, idealHeight: 260, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(12)
-        .background(ScoutColors.canvas)
+        .background(Color.clear)
         .accessibilityIdentifier("scout.discoveryCockpit")
     }
 }

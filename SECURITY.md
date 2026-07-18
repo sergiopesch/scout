@@ -15,11 +15,20 @@ ordinary UI failure.
 
 ## Reporting a vulnerability
 
-Use GitHub private vulnerability reporting for the repository when it is enabled. If it is not
-available, contact the repository owner through an established private channel. Do not open a public
-issue containing exploit details, credentials, customer evidence, context packs, database files, or
-Keychain material. Include a synthetic reproduction, affected commit, impact, and suggested embargo
-window when possible.
+Use [GitHub private vulnerability reporting](https://github.com/sergiopesch/scout/security/advisories/new).
+If GitHub does not offer the private form, contact the
+[repository owner](https://github.com/sergiopesch) without exploit details and request a private
+channel. Do not open a public issue containing exploit details, credentials, customer evidence,
+context packs, database files, or Keychain material. Include a synthetic reproduction, affected
+commit, impact, and suggested embargo window when possible.
+
+## Supported versions and response targets
+
+Scout is pre-1.0 and currently supports only the latest commit on `main`; no public binary release is
+supported yet. Security fixes are not backported unless a release notes otherwise. The project aims to
+acknowledge a private report within three business days, provide an initial triage decision within ten
+business days, and coordinate disclosure only after a fix or explicit risk decision. These are
+best-effort targets, not a service-level agreement.
 
 ## Threat Model, Trust Boundaries, and Assumptions
 
@@ -27,7 +36,8 @@ The repository has six runtime boundaries:
 
 1. The native outer launcher reads provider and approval secrets from device-local Keychain, starts the
    bundled Gateway with fresh credentials and an OS-assigned port, then starts the UI without those
-   persistent secrets. It supervises both children as one failure domain.
+   persistent secrets. It constructs closed child environments, pins the production provider endpoint,
+   and supervises both children as one failure domain.
 2. `ScoutApp` is a sandboxed native client operated by the signed-in Mac user. It may access only the
    microphone, explicitly selected screen/audio sources, explicitly selected files, the app Keychain
    item, local application support, and either the bundled loopback bridge or an explicitly configured
@@ -41,9 +51,11 @@ The repository has six runtime boundaries:
    path.
 5. The encrypted append-only journal is authoritative. UI diagrams, questions, quick wins, and action
    packs are disposable projections over verified events.
-6. The Codex plugin and stdio MCP process expose approved, immutable, evidence-minimized context packs only.
-   They do not expose raw audio, unrestricted transcripts, local database files, Keychain material, or
-   provider credentials.
+6. The Codex plugin and stdio MCP process expose approved, immutable, evidence-minimized context packs
+   only. They do not fetch Keychain material or provider credentials. The current symmetric HMAC format
+   still requires explicitly configured signing-capable key material for approved reads; without it,
+   the standalone MCP process starts but fails those reads closed. Asymmetric verify-only signatures
+   remain required to remove that residual privilege.
 
 Meeting speech, transcribed text, filenames, imported pixels, visible whiteboard text, model output,
 HTTP bodies, WebSocket frames, MCP arguments, and context-pack files are attacker-controlled inputs.
@@ -74,12 +86,15 @@ Security invariants:
   versions, provider response ID, model, and output hash before any derived projection is committed.
 - All event bodies are hash-linked, canonically encoded, reducer-validated, encrypted at rest with a
   non-synchronizing device-bound key, and replayable without contacting OpenAI.
-- Image and audio parsers enforce byte, frame, dimension, pixel, decompression, duration, and schema
-  limits before provider or model processing.
+- Native captured PCM validation enforces frame shape, sample rate, ordering, byte, and exact-duration
+  bounds. Native image import enforces byte, frame, dimension, pixel, and decompression limits before
+  normalization. The Gateway's diarization upload currently enforces multipart shape, extension, and
+  byte limits but does not decode/probe the audio container; this remains a release blocker.
 - Context-pack approval is explicit, immutable, hash-verified, evidence-linked, and fail-closed when
   POC scope, constraints, success criteria, redaction state, or current session head is missing/stale.
-- Gateway-minted approval uses a Keychain-backed active HMAC key plus retained verify-only keys;
-  ordinary transport authentication cannot assert approval.
+- Gateway-minted approval uses a Keychain-backed active HMAC key plus retained rotation entries;
+  ordinary transport authentication cannot assert approval. HMAC holders remain signing-capable, so
+  asymmetric verification-only MCP keys are still required for release.
 - Raw audio, normalized source images, unrestricted transcripts, personal data, secrets, and hidden
   instructions are excluded from Codex exports by default.
 
@@ -89,8 +104,8 @@ Current deployment boundaries:
   does not yet provide per-engagement key shredding.
 - There is no automatic migration for a database created before encrypted persistence was enabled;
   such stores must be exported or replaced through a deliberate operator procedure.
-- Visual observations deliberately stop at proposal cards. Human accept/reject and promotion into the
-  canonical graph are future work.
+- Visual observations deliberately stop at proposal cards. Authenticated human accept/reject is
+  implemented as append-only review evidence; promotion into the canonical graph remains future work.
 - Diarization results are bounded and evidence-linked, but a dedicated durable diarization model-call
   receipt is future work; speaker labels therefore remain unconfirmed identities.
 - Production Developer ID notarization remains an external release gate until a signing identity and
@@ -103,12 +118,14 @@ Current deployment boundaries:
   requires deterministic validation plus human approval. Any path that executes those instructions,
   changes policy, invokes tools, or bypasses approval is reportable.
 - A local process can probe the bridge. OS-assigned ports, per-launch instance attestation before
-  authorization, ephemeral tokens, loopback binding, strict methods/content types, bounded requests,
-  WebSocket limits, and supervised shutdown reduce the surface. Authentication bypass, customer bytes
-  sent before peer attestation, token leakage, or a remote-bind path is reportable.
+  authorization, closed child environments, a pinned production provider endpoint, ephemeral tokens,
+  loopback binding, strict methods/content types, bounded requests, WebSocket limits, and supervised
+  shutdown reduce the surface. Authentication bypass, customer bytes sent before peer attestation,
+  token leakage, or a remote-bind path is reportable.
 - Malformed audio or images can target native/provider parsers or exhaust resources. Native ImageIO
-  preflight and normalization, gateway JPEG verification, bounded multipart streaming, local audio
-  segmentation, request timeouts, and provider response limits must fail closed.
+  preflight and normalization, structural Gateway JPEG verification, bounded multipart streaming,
+  local PCM segmentation, request timeouts, and provider response limits reduce the surface. A
+  sandboxed decoder/probe for uploaded diarization audio is still required.
 - A crash, retry, or concurrent callback can target event ordering. SQLite `BEGIN IMMEDIATE`, expected
   stream versions, canonical idempotency hashes, a FIFO journal boundary, reducer invariants, and full
   replay verification prevent silent forks or partial graph commits.

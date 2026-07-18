@@ -7,7 +7,11 @@ recorded in `Gateway/package-lock.json` and `Gateway/sbom.cdx.json`.
   respective licenses. Release operators must provide the matching upstream Node.js `LICENSE` file
   through `SCOUT_NODE_LICENSE_PATH` for Developer ID builds.
 - JavaScript dependency names, versions, package URLs, hashes, and declared licenses are recorded in
-  the generated CycloneDX SBOM bundled with each release.
+  the build-specific CycloneDX SBOM bundled with each release. Complete installed production
+  dependency license and notice texts are bundled as `GATEWAY_THIRD_PARTY_LICENSES.txt` and are
+  regenerated deterministically from the pinned lockfile before Gateway bundling.
 
-Scout itself is not granted a public distribution license by this notice. Repository owners must add
-the intended project license before making the repository or binaries public.
+Scout-owned source remains all rights reserved under the repository `LICENSE`; identified third-party
+components remain governed by their respective terms. Public source visibility and this notice grant
+no permission to redistribute Scout-owned source or binaries. Distributable builds require the
+matching Node.js license, complete Gateway dependency licenses, this notice, and the generated SBOM.

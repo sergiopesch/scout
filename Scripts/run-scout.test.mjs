@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildAppEnvironment,
+  buildGatewayEnvironment,
   createLaunchCredentials,
   parseGatewayStartedLine,
 } from "./run-scout-lib.mjs";
@@ -26,11 +27,33 @@ test("launch credentials are fresh, ephemeral, and keep provider secrets out of 
   assert.equal(first.gatewayEnvironment.OPENAI_API_KEY, secrets.openAIAPIKey);
   assert.equal(first.gatewayEnvironment.SCOUT_APPROVAL_HMAC_KEY, secrets.approvalKey);
 
+  const gatewayEnvironment = buildGatewayEnvironment({
+    parentEnvironment: {
+      PATH: "/usr/bin",
+      NODE_OPTIONS: "--require=/tmp/attacker.js",
+      NODE_PATH: "/tmp/attacker-modules",
+      DYLD_INSERT_LIBRARIES: "/tmp/attacker.dylib",
+      OPENAI_BASE_URL: "http://127.0.0.1:9999/v1",
+      HTTPS_PROXY: "http://127.0.0.1:8888",
+      SSLKEYLOGFILE: "/tmp/keys.log",
+    },
+    credentials: first,
+  });
+  assert.equal(gatewayEnvironment.PATH, "/usr/bin");
+  assert.equal(gatewayEnvironment.OPENAI_API_KEY, secrets.openAIAPIKey);
+  assert.equal(gatewayEnvironment.NODE_OPTIONS, undefined);
+  assert.equal(gatewayEnvironment.NODE_PATH, undefined);
+  assert.equal(gatewayEnvironment.DYLD_INSERT_LIBRARIES, undefined);
+  assert.equal(gatewayEnvironment.OPENAI_BASE_URL, undefined);
+  assert.equal(gatewayEnvironment.HTTPS_PROXY, undefined);
+  assert.equal(gatewayEnvironment.SSLKEYLOGFILE, undefined);
+
   const appEnvironment = buildAppEnvironment({
     parentEnvironment: {
       PATH: "/usr/bin",
       OPENAI_API_KEY: "must-not-cross-the-native-boundary",
       OPENAI_BASE_URL: "https://provider.invalid/v1",
+      NODE_OPTIONS: "--require=/tmp/attacker.js",
     },
     credentials: first,
     port: 49_123,
@@ -40,6 +63,7 @@ test("launch credentials are fresh, ephemeral, and keep provider secrets out of 
   assert.equal(appEnvironment.SCOUT_GATEWAY_INSTANCE_ID, first.instanceID);
   assert.equal(appEnvironment.OPENAI_API_KEY, undefined);
   assert.equal(appEnvironment.OPENAI_BASE_URL, undefined);
+  assert.equal(appEnvironment.NODE_OPTIONS, undefined);
   assert.equal(appEnvironment.SCOUT_APPROVAL_HMAC_KEY, undefined);
   assert.equal(appEnvironment.SCOUT_APPROVAL_VERIFICATION_KEYS, undefined);
 });

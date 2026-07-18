@@ -33,9 +33,9 @@ Put `OPENAI_API_KEY` in `.env.local` only for the first migration, then run:
 make configure-secrets
 ```
 
-The command imports the provider key, imports or creates the approval keyring, removes secret lines
-from `.env.local`, and sets the file to owner-only permissions. Confirm configuration without exposing
-values:
+After device-owner authentication, the command imports the provider key, imports or creates the
+approval keyring, removes secret lines from `.env.local`, and sets the file to owner-only permissions.
+Confirm configuration without exposing values:
 
 ```sh
 .build/tools/scout-launcher secrets status
@@ -95,8 +95,9 @@ approval keys, raw audio, transcript bodies, source image bytes, or full context
 make check                 # all deterministic repository gates
 make package-smoke         # packaged runtime, Keychain, attestation, authenticated read
 make live-smoke            # plus one real OpenAI two-speaker claim extraction
-make rotate-approval-key   # retain old verification keys and activate a new signer
+make rotate-approval-key   # retain old compatibility keys and activate a new signer
 make clean                 # remove generated build/release output only
+make deep-clean            # also remove Gateway/node_modules; npm ci restores it
 ```
 
 ## Known operational boundaries

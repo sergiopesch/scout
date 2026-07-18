@@ -1,0 +1,449 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "tools": [
+      {
+        "vendor": "evanw",
+        "name": "esbuild",
+        "version": "0.28.1"
+      }
+    ],
+    "component": {
+      "bom-ref": "scout-plugin-mcp@0.1.0",
+      "type": "application",
+      "name": "Scout plugin MCP bundle",
+      "version": "0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "eea34aa29ce4242c9173aac12564f9f37c5069a25bb30c0e79a95f9307790a0f"
+        }
+      ],
+      "properties": [
+        {
+          "name": "scout:bundle:entrypoint",
+          "value": "mcp/scout-mcp.cjs"
+        },
+        {
+          "name": "scout:bundle:node-target",
+          "value": "node22"
+        },
+        {
+          "name": "scout:bundle:generator",
+          "value": "Scripts/generate-plugin-release-metadata.mjs"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "pkg:npm/%40modelcontextprotocol/sdk@1.29.0",
+      "type": "library",
+      "name": "@modelcontextprotocol/sdk",
+      "version": "1.29.0",
+      "scope": "required",
+      "author": "Anthropic, PBC (https://anthropic.com)",
+      "purl": "pkg:npm/%40modelcontextprotocol/sdk@1.29.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "ce8dfb99903d8495a950b824469a307b07b3d72e8c2f91ac5c93d8f05234b4104277bec712fcdae230ea44a397807367f3aecf5460b24ddceaa73d22ceee598d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "scout:bundle:input-count",
+          "value": "16"
+        },
+        {
+          "name": "scout:bundle:license-file",
+          "value": "LICENSE"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/ajv@8.20.0",
+      "type": "library",
+      "name": "ajv",
+      "version": "8.20.0",
+      "scope": "required",
+      "author": "Evgeny Poberezkin",
+      "purl": "pkg:npm/ajv@8.20.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "4e16e58be3a53a3fa230f60505505f2773a60809da4b2367e0cd6fcfd4fa1a46b926df5b6bf1c8479ea3a32eb9b58ea4c7f142179557341f35f58eff194ac118"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/ajv/-/ajv-8.20.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "scout:bundle:input-count",
+          "value": "63"
+        },
+        {
+          "name": "scout:bundle:license-file",
+          "value": "LICENSE"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/ajv-formats@3.0.1",
+      "type": "library",
+      "name": "ajv-formats",
+      "version": "3.0.1",
+      "scope": "required",
+      "author": "Evgeny Poberezkin",
+      "purl": "pkg:npm/ajv-formats@3.0.1",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "f2252a979d04511fae51c7514371c3a9ae84572a3776870bf20e5627714d7169aeeb621b90652e7bfa44c8b056f1518a2ae7133e0a9e92ce1f214d43038ca8c1"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/ajv-formats/-/ajv-formats-3.0.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "scout:bundle:input-count",
+          "value": "3"
+        },
+        {
+          "name": "scout:bundle:license-file",
+          "value": "LICENSE"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/dotenv@17.2.3",
+      "type": "library",
+      "name": "dotenv",
+      "version": "17.2.3",
+      "scope": "required",
+      "purl": "pkg:npm/dotenv@17.2.3",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "255527b7e0d4233bbced30016e13e635f55d043b75f012ce5a33141493128bf42a83b35362d69b6ef48d246389eda7db46ebfd0ff967822cc7b4fed0c8b43ef7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/dotenv/-/dotenv-17.2.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "scout:bundle:input-count",
+          "value": "2"
+        },
+        {
+          "name": "scout:bundle:license-file",
+          "value": "LICENSE"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/fast-deep-equal@3.1.3",
+      "type": "library",
+      "name": "fast-deep-equal",
+      "version": "3.1.3",
+      "scope": "required",
+      "author": "Evgeny Poberezkin",
+      "purl": "pkg:npm/fast-deep-equal@3.1.3",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "7f7a90f68432f63d808417bf1fd542f75c0b98a042094fe00ce9ca340606e61b303bb04b2a3d3d1dce4760dcfd70623efb19690c22200da8ad56cd3701347ce1"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "scout:bundle:input-count",
+          "value": "1"
+        },
+        {
+          "name": "scout:bundle:license-file",
+          "value": "LICENSE"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/fast-uri@3.1.3",
+      "type": "library",
+      "name": "fast-uri",
+      "version": "3.1.3",
+      "scope": "required",
+      "author": "Vincent Le Goff <vince.legoff@gmail.com> (https://github.com/zekth)",
+      "purl": "pkg:npm/fast-uri@3.1.3",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "8bbd0bc0659476e5eace270a5d6b21a28abeb162f52b7594539aca64d1bfd22ddad4e4a85f71ea847e566d6c139aa59fa2be2ead46a418f89141c95e4594f03a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "scout:bundle:input-count",
+          "value": "3"
+        },
+        {
+          "name": "scout:bundle:license-file",
+          "value": "LICENSE"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/json-schema-traverse@1.0.0",
+      "type": "library",
+      "name": "json-schema-traverse",
+      "version": "1.0.0",
+      "scope": "required",
+      "author": "Evgeny Poberezkin",
+      "purl": "pkg:npm/json-schema-traverse@1.0.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "34cf3f3fd9f75e35e12199f594b86415a0024ce5114178d6855e0103f4673aff31be0aadaa9017f483b89914314b1d51968e2dab37aa6f4b0e96bb9a3b2dddba"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "scout:bundle:input-count",
+          "value": "1"
+        },
+        {
+          "name": "scout:bundle:license-file",
+          "value": "LICENSE"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/zod@4.4.3",
+      "type": "library",
+      "name": "zod",
+      "version": "4.4.3",
+      "scope": "required",
+      "author": "Colin McDonnell <zod@colinhacks.com>",
+      "purl": "pkg:npm/zod@4.4.3",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "cad10d163209165d94c1882575eda37215b61f09b818914b0e249759d4eb25004837d15cca9ee7e0387124489634024c575fc1a967d6fe4920ef55037072724d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "scout:bundle:input-count",
+          "value": "98"
+        },
+        {
+          "name": "scout:bundle:license-file",
+          "value": "LICENSE"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/zod-to-json-schema@3.25.2",
+      "type": "library",
+      "name": "zod-to-json-schema",
+      "version": "3.25.2",
+      "scope": "required",
+      "author": "Stefan Terdell",
+      "purl": "pkg:npm/zod-to-json-schema@3.25.2",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "3bf3e07e7a53d712920de4184827d12391b2de13dff7598a543b982d41d924c883169b6f3f8d4c4a75a87e6f1d9c29b4db9e9935f64833b0d2cee48c0059e31c"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/zod-to-json-schema/-/zod-to-json-schema-3.25.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "scout:bundle:input-count",
+          "value": "39"
+        },
+        {
+          "name": "scout:bundle:license-file",
+          "value": "LICENSE"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "scout-plugin-mcp@0.1.0",
+      "dependsOn": [
+        "pkg:npm/%40modelcontextprotocol/sdk@1.29.0",
+        "pkg:npm/ajv-formats@3.0.1",
+        "pkg:npm/ajv@8.20.0",
+        "pkg:npm/dotenv@17.2.3",
+        "pkg:npm/fast-deep-equal@3.1.3",
+        "pkg:npm/fast-uri@3.1.3",
+        "pkg:npm/json-schema-traverse@1.0.0",
+        "pkg:npm/zod-to-json-schema@3.25.2",
+        "pkg:npm/zod@4.4.3"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40modelcontextprotocol/sdk@1.29.0",
+      "dependsOn": [
+        "pkg:npm/ajv-formats@3.0.1",
+        "pkg:npm/ajv@8.20.0",
+        "pkg:npm/zod-to-json-schema@3.25.2",
+        "pkg:npm/zod@4.4.3"
+      ]
+    },
+    {
+      "ref": "pkg:npm/ajv@8.20.0",
+      "dependsOn": [
+        "pkg:npm/fast-deep-equal@3.1.3",
+        "pkg:npm/fast-uri@3.1.3",
+        "pkg:npm/json-schema-traverse@1.0.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/ajv-formats@3.0.1",
+      "dependsOn": [
+        "pkg:npm/ajv@8.20.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/dotenv@17.2.3",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/fast-deep-equal@3.1.3",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/fast-uri@3.1.3",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/json-schema-traverse@1.0.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/zod@4.4.3",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/zod-to-json-schema@3.25.2",
+      "dependsOn": [
+        "pkg:npm/zod@4.4.3"
+      ]
+    }
+  ]
+}

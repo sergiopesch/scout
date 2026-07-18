@@ -1,0 +1,1565 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#090c12" />
+  <link rel="icon" type="image/png" href="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" />
+  <title>Scout — The first call becomes the first act of transformation</title>
+  <style>
+    :root {
+      --ink: #fafaf7;
+      --muted: #b8b8b3;
+      --faint: #73747a;
+      --canvas: #101115;
+      --canvas-2: #17181c;
+      --panel: #1d1f25;
+      --panel-2: #292c34;
+      --stroke: rgba(250, 250, 247, .12);
+      --stroke-strong: rgba(250, 250, 247, .24);
+      --mint: #fafaf7;
+      --cyan: #ecece7;
+      --blue: #d7d7d2;
+      --indigo: #c4c4bf;
+      --coral: #b5b6b2;
+      --gold: #f7f7f3;
+      --violet: #a9aaad;
+      --display: "Avenir Next", "Futura", sans-serif;
+      --body: "Avenir Next", "Gill Sans", sans-serif;
+      --serif: "Iowan Old Style", "Baskerville", serif;
+      --mono: "SFMono-Regular", "Menlo", monospace;
+      --ease: cubic-bezier(.22, 1, .36, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      background: #05070a;
+      color: var(--ink);
+      font-family: var(--body);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
+    }
+    button { font: inherit; }
+    button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .viewport {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 20% 15%, rgba(250, 250, 247, .045), transparent 36%),
+        #0a0b0e;
+    }
+
+    .stage {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 1440px;
+      height: 810px;
+      overflow: hidden;
+      transform-origin: top left;
+      background: var(--canvas);
+      box-shadow: 0 30px 100px rgba(0,0,0,.6);
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: none;
+      overflow: clip;
+      background:
+        radial-gradient(circle at 82% 12%, rgba(250, 250, 247, .045), transparent 30%),
+        radial-gradient(circle at 10% 92%, rgba(250, 250, 247, .025), transparent 28%),
+        var(--canvas);
+    }
+    .slide.active { display: block; }
+    .slide::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: .38;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.08'/%3E%3C/svg%3E");
+      mix-blend-mode: soft-light;
+    }
+
+    .slide-grid {
+      background-image:
+        linear-gradient(rgba(255,255,255,.026) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.026) 1px, transparent 1px);
+      background-size: 48px 48px;
+    }
+
+    .pad { position: relative; z-index: 2; height: 100%; padding: 70px 84px 64px; }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--mint);
+      font: 700 13px/1 var(--display);
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    .eyebrow::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 18px currentColor;
+    }
+    .eyebrow.gold { color: var(--gold); }
+    .eyebrow.cyan { color: var(--cyan); }
+    .eyebrow.coral { color: var(--coral); }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 {
+      max-width: 1120px;
+      font: 640 82px/.96 var(--display);
+      letter-spacing: -.052em;
+    }
+    h2 {
+      max-width: 1080px;
+      font: 640 62px/1.02 var(--display);
+      letter-spacing: -.043em;
+    }
+    h3 { font: 650 27px/1.1 var(--display); letter-spacing: -.025em; }
+    .lead {
+      max-width: 900px;
+      color: var(--muted);
+      font: 450 25px/1.45 var(--body);
+      letter-spacing: -.012em;
+    }
+    .display-serif { font-family: var(--serif); font-weight: 400; font-style: italic; }
+    .mint { color: var(--mint); }
+    .gold { color: var(--gold); }
+    .coral { color: var(--coral); }
+    .cyan { color: var(--cyan); }
+    .muted { color: var(--muted); }
+    .small-caps {
+      font: 700 11px/1 var(--display);
+      letter-spacing: .17em;
+      text-transform: uppercase;
+      color: var(--faint);
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(18px);
+    }
+    .active .reveal {
+      animation: rise .82s var(--ease) forwards;
+      animation-delay: var(--d, 0s);
+    }
+    @keyframes rise { to { opacity: 1; transform: translateY(0); } }
+
+    .brand-mark {
+      position: absolute;
+      z-index: 4;
+      top: 30px;
+      left: 40px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      color: rgba(242,246,248,.82);
+      font: 700 14px/1 var(--display);
+      letter-spacing: .03em;
+    }
+    .brand-mark img { width: 25px; height: 25px; object-fit: contain; }
+
+    .chapter-number {
+      position: absolute;
+      top: 36px;
+      right: 46px;
+      z-index: 4;
+      font: 700 11px/1 var(--mono);
+      color: rgba(153,166,181,.55);
+      letter-spacing: .08em;
+    }
+
+    .progress {
+      position: fixed;
+      z-index: 100;
+      top: 0;
+      left: 0;
+      height: 3px;
+      width: 0;
+      background: linear-gradient(90deg, var(--cyan), var(--mint));
+      box-shadow: 0 0 22px rgba(250,250,247,.25);
+      transition: width .45s var(--ease);
+    }
+
+    .controls {
+      position: fixed;
+      z-index: 110;
+      right: 22px;
+      bottom: 18px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      opacity: .32;
+      transition: opacity .2s ease;
+    }
+    .controls:hover, .controls:focus-within { opacity: 1; }
+    .control-btn, .counter {
+      height: 34px;
+      border: 1px solid rgba(255,255,255,.13);
+      border-radius: 9px;
+      color: #e5edf2;
+      background: rgba(14,19,27,.86);
+      backdrop-filter: blur(14px);
+    }
+    .control-btn {
+      min-width: 34px;
+      padding: 0 10px;
+      cursor: pointer;
+    }
+    .control-btn:hover { border-color: rgba(250,250,247,.5); color: var(--mint); }
+    .control-btn:disabled { cursor: not-allowed; opacity: .42; }
+    .counter { display: grid; place-items: center; min-width: 58px; padding: 0 9px; font: 700 11px var(--mono); color: var(--muted); }
+
+    /* 01 — opening */
+    .opening .pad { display: flex; flex-direction: column; justify-content: center; }
+    .opening h1 { margin-top: 28px; max-width: 1050px; }
+    .opening .lead { margin-top: 35px; max-width: 900px; }
+    .opening .signal {
+      position: absolute;
+      right: -100px;
+      bottom: 20px;
+      width: 760px;
+      height: 380px;
+      opacity: .58;
+      filter: drop-shadow(0 0 24px rgba(250,250,247,.10));
+    }
+    .opening .signal path { stroke-dasharray: 1200; stroke-dashoffset: 1200; }
+    .opening.active .signal path { animation: draw 2.2s .55s var(--ease) forwards; }
+    @keyframes draw { to { stroke-dashoffset: 0; } }
+    .opening .human-orbit {
+      position: absolute;
+      width: 520px;
+      height: 520px;
+      right: -90px;
+      top: -180px;
+      border: 1px solid rgba(250,250,247,.08);
+      border-radius: 50%;
+      box-shadow: 0 0 0 70px rgba(250,250,247,.018), 0 0 0 140px rgba(250,250,247,.012);
+    }
+
+    /* 02 — division */
+    .division .pad { padding-top: 86px; }
+    .division h2 { margin-top: 22px; max-width: 980px; }
+    .reality-split {
+      margin-top: 58px;
+      display: grid;
+      grid-template-columns: .92fr 1.18fr;
+      gap: 46px;
+      align-items: stretch;
+    }
+    .utterance-card {
+      position: relative;
+      min-height: 330px;
+      padding: 34px;
+      border: 1px solid var(--stroke);
+      border-radius: 22px;
+      background: linear-gradient(140deg, rgba(23,31,44,.95), rgba(13,18,27,.82));
+      overflow: hidden;
+    }
+    .utterance-card::before {
+      content: "“";
+      position: absolute;
+      right: 26px;
+      top: -58px;
+      font: 300 230px/1 var(--serif);
+      color: rgba(250,250,247,.065);
+    }
+    .utterance-card blockquote {
+      position: relative;
+      margin: 54px 0 0;
+      font: 400 36px/1.28 var(--serif);
+      letter-spacing: -.02em;
+    }
+    .utterance-card .speaker { margin-top: 26px; color: var(--cyan); font: 700 13px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; }
+    .private-realities { display: grid; gap: 11px; }
+    .private-row {
+      display: grid;
+      grid-template-columns: 112px 1fr;
+      align-items: center;
+      min-height: 56px;
+      padding: 10px 16px;
+      border-left: 2px solid var(--row-color);
+      background: linear-gradient(90deg, color-mix(in srgb, var(--row-color) 10%, transparent), rgba(255,255,255,.02));
+      border-radius: 0 12px 12px 0;
+    }
+    .private-row strong { font: 700 12px/1 var(--display); color: var(--row-color); letter-spacing: .08em; text-transform: uppercase; }
+    .private-row span { color: #d9e1e7; font-size: 16px; }
+    .division-line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 1px;
+      background: linear-gradient(transparent, rgba(250,250,247,.16), transparent);
+      transform: rotate(5deg);
+    }
+
+    /* 03 — distance */
+    .distance .pad { display: grid; grid-template-rows: auto 1fr; }
+    .distance h2 { margin-top: 22px; max-width: 1050px; }
+    .handoff-chain { align-self: end; margin-bottom: 30px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+    .handoff-step { position: relative; min-height: 270px; padding: 24px 20px; border-top: 1px solid var(--stroke); }
+    .handoff-step::after {
+      content: "";
+      position: absolute;
+      top: -4px;
+      right: -11px;
+      width: 8px;
+      height: 8px;
+      border-top: 1px solid var(--faint);
+      border-right: 1px solid var(--faint);
+      transform: rotate(45deg);
+    }
+    .handoff-step:last-child::after { display: none; }
+    .handoff-step .num { font: 700 12px/1 var(--mono); color: var(--faint); }
+    .handoff-step h3 { margin-top: 78px; font-size: 24px; }
+    .handoff-step p { margin-top: 12px; color: var(--muted); font-size: 16px; line-height: 1.45; }
+    .entropy {
+      position: absolute;
+      left: 84px;
+      right: 84px;
+      bottom: 50px;
+      height: 3px;
+      background: linear-gradient(90deg, var(--mint), var(--cyan) 28%, var(--gold) 62%, var(--coral));
+      opacity: .65;
+    }
+
+    /* 04 — shared */
+    .shared .pad { display: grid; grid-template-columns: .82fr 1.18fr; gap: 70px; align-items: center; }
+    .shared h2 { margin-top: 22px; max-width: 580px; }
+    .shared .lead { margin-top: 28px; font-size: 22px; }
+    .shared-canvas { position: relative; height: 590px; }
+    .shared-ring { position: absolute; inset: 55px 10px 25px 70px; border: 1px solid rgba(250,250,247,.18); border-radius: 50%; box-shadow: inset 0 0 80px rgba(250,250,247,.03), 0 0 90px rgba(250,250,247,.035); }
+    .shared-ring::before, .shared-ring::after { content: ""; position: absolute; inset: 12%; border: 1px solid rgba(250,250,247,.11); border-radius: 50%; }
+    .shared-ring::after { inset: 29%; border-color: rgba(250,250,247,.16); }
+    .shared-core {
+      position: absolute;
+      left: 52%;
+      top: 50%;
+      transform: translate(-50%,-50%);
+      width: 198px;
+      height: 198px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      font: 700 19px/1.28 var(--display);
+      background: radial-gradient(circle at 35% 30%, rgba(250,250,247,.16), rgba(29,31,37,.95) 55%);
+      border: 1px solid rgba(250,250,247,.36);
+      box-shadow: 0 0 60px rgba(250,250,247,.08);
+    }
+    .human {
+      position: absolute;
+      width: 138px;
+      padding: 12px;
+      border: 1px solid var(--stroke);
+      border-radius: 13px;
+      background: rgba(17,24,36,.9);
+      text-align: center;
+      font: 700 12px/1 var(--display);
+      letter-spacing: .06em;
+      color: var(--muted);
+    }
+    .human::before { content: ""; display: block; width: 22px; height: 22px; margin: 0 auto 8px; border-radius: 50% 50% 44% 44%; background: var(--human-color); box-shadow: 0 0 18px color-mix(in srgb, var(--human-color) 38%, transparent); }
+    .human.h1 { left: 0; top: 88px; }
+    .human.h2 { right: 0; top: 88px; }
+    .human.h3 { right: 10px; bottom: 24px; }
+    .human.h4 { left: 20px; bottom: 22px; }
+    .orbit-word { position: absolute; color: var(--human-color); font: 700 13px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; }
+    .ow1 { left: 46%; top: 45px; }
+    .ow2 { right: 36px; top: 50%; }
+    .ow3 { left: 46%; bottom: 2px; }
+    .ow4 { left: 82px; top: 50%; }
+
+    /* 05 — reveal */
+    .reveal-scout .pad { display: grid; grid-template-columns: .86fr 1.14fr; gap: 60px; align-items: center; }
+    .scout-word { margin-top: 15px; font: 700 118px/.88 var(--display); letter-spacing: -.075em; }
+    .reveal-scout .lead { margin-top: 34px; font-size: 23px; max-width: 590px; }
+    .promise-stack { display: grid; gap: 14px; }
+    .promise {
+      display: grid;
+      grid-template-columns: 76px 1fr;
+      gap: 23px;
+      align-items: center;
+      padding: 25px 26px;
+      min-height: 112px;
+      border-bottom: 1px solid var(--stroke);
+    }
+    .promise:last-child { border-bottom: 0; }
+    .promise-index { font: 700 34px/1 var(--mono); color: var(--promise-color); opacity: .82; }
+    .promise h3 { font-size: 24px; }
+    .promise p { margin-top: 6px; color: var(--muted); font-size: 16px; line-height: 1.42; }
+
+    /* 06 — product picture */
+    .product-picture .pad { padding-bottom: 42px; }
+    .product-picture h2 { margin-top: 20px; max-width: 1010px; }
+    .product-frame {
+      position: absolute;
+      left: 84px;
+      right: 84px;
+      bottom: -55px;
+      height: 525px;
+      border: 1px solid var(--stroke-strong);
+      border-radius: 24px 24px 0 0;
+      overflow: hidden;
+      background: var(--panel);
+      box-shadow: 0 30px 90px rgba(0,0,0,.55), 0 0 0 10px rgba(255,255,255,.018);
+    }
+    .product-frame img { width: 100%; height: 100%; object-fit: cover; object-position: center 11%; filter: saturate(.92) contrast(1.02); }
+    .product-frame::after { content: ""; position: absolute; inset: 0; background: linear-gradient(transparent 70%, var(--canvas)); pointer-events: none; }
+    .live-pulse {
+      position: absolute;
+      right: 118px;
+      top: 172px;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 10px 14px;
+      border: 1px solid rgba(250,250,247,.32);
+      border-radius: 999px;
+      color: var(--mint);
+      background: rgba(9,12,18,.82);
+      font: 700 12px/1 var(--display);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      box-shadow: 0 0 32px rgba(250,250,247,.08);
+    }
+    .live-pulse i { width: 8px; height: 8px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 0 rgba(250,250,247,.45); animation: pulse 1.8s infinite; }
+    @keyframes pulse { 60% { box-shadow: 0 0 0 10px rgba(250,250,247,0); } 100% { box-shadow: 0 0 0 0 rgba(250,250,247,0); } }
+
+    /* 07 — interactive product demo */
+    .demo-slide .pad { padding: 48px 54px 45px; }
+    .demo-shell {
+      height: 710px;
+      border: 1px solid var(--stroke-strong);
+      border-radius: 20px;
+      overflow: hidden;
+      background: #0b0f16;
+      box-shadow: 0 28px 80px rgba(0,0,0,.42);
+    }
+    .demo-top {
+      height: 72px;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 12px;
+      align-items: center;
+      padding: 0 22px;
+      border-bottom: 1px solid var(--stroke);
+    }
+    .demo-title strong { display: block; font: 700 22px/1 var(--display); }
+    .demo-title span { display: inline-block; margin-left: 7px; color: var(--muted); font-size: 14px; }
+    .demo-title small { display: block; margin-top: 7px; color: var(--gold); font: 700 9px/1 var(--display); letter-spacing: .11em; text-transform: uppercase; }
+    .demo-metrics { display: flex; gap: 8px; }
+    .demo-metric { padding: 9px 12px; border: 1px solid var(--stroke); border-radius: 9px; color: var(--muted); font: 600 12px/1 var(--display); background: rgba(255,255,255,.025); }
+    .demo-metric b { color: var(--ink); margin-right: 5px; }
+    .demo-listen {
+      border: 1px solid rgba(250,250,247,.32);
+      border-radius: 10px;
+      padding: 11px 15px;
+      color: #07110e;
+      background: var(--mint);
+      cursor: pointer;
+      font: 750 12px/1 var(--display);
+    }
+    .demo-listen.running { color: var(--mint); background: rgba(250,250,247,.08); }
+    .demo-body { height: 638px; display: grid; grid-template-columns: 1.8fr .72fr; }
+    .demo-main { display: grid; grid-template-rows: 1fr 155px; min-width: 0; }
+    .demo-graph { position: relative; overflow: hidden; border-right: 1px solid var(--stroke); background-image: linear-gradient(rgba(255,255,255,.027) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.027) 1px, transparent 1px); background-size: 34px 34px; }
+    .graph-label { position: absolute; top: 19px; left: 21px; z-index: 5; }
+    .graph-label strong { display: block; margin-top: 6px; font: 700 18px/1 var(--display); }
+    .demo-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .demo-edge { fill: none; stroke: rgba(250,250,247,.44); stroke-width: 1.4; opacity: 0; transition: opacity .5s ease; }
+    .demo-edge.friction { stroke: rgba(250,250,247,.68); stroke-dasharray: 6 6; stroke-width: 2; }
+    .demo-edge.is-visible { opacity: 1; }
+    .demo-node {
+      position: absolute;
+      z-index: 3;
+      width: 148px;
+      min-height: 58px;
+      padding: 11px 12px 10px 17px;
+      border: 1px solid var(--stroke);
+      border-radius: 12px;
+      background: rgba(20,27,39,.98);
+      box-shadow: 0 8px 24px rgba(0,0,0,.25);
+      opacity: 0;
+      visibility: hidden;
+      transform: scale(.82);
+      transition: opacity .52s var(--ease), transform .52s var(--ease), border-color .2s, visibility 0s linear .52s;
+    }
+    .demo-node::before { content: ""; position: absolute; left: 0; top: 15px; bottom: 15px; width: 3px; border-radius: 0 3px 3px 0; background: var(--node-color); }
+    .demo-node.is-visible { opacity: 1; visibility: visible; transform: scale(1); transition-delay: 0s; }
+    .demo-node.is-active { border-color: var(--node-color); box-shadow: 0 0 28px color-mix(in srgb, var(--node-color) 14%, transparent); }
+    .demo-node b { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 700 13px/1.2 var(--display); }
+    .demo-node span { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
+    .node-goal { left: 7%; top: 25%; --node-color: var(--gold); }
+    .node-process { left: 33%; top: 24%; --node-color: var(--mint); }
+    .node-rekey { left: 69%; top: 24%; --node-color: var(--coral); }
+    .node-sf { left: 12%; top: 59%; --node-color: var(--blue); }
+    .node-csv { left: 34%; top: 76%; --node-color: var(--cyan); }
+    .node-ns { left: 45%; top: 58%; --node-color: var(--blue); }
+    .node-zd { left: 72%; top: 58%; --node-color: var(--blue); }
+    .node-policy { left: 79%; top: 79%; --node-color: var(--violet); }
+    .demo-transcript { padding: 10px 20px; overflow: hidden; border-top: 1px solid var(--stroke); border-right: 1px solid var(--stroke); background: #0d121a; }
+    .transcript-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .transcript-head b { font: 700 12px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+    .utterance-line { display: none; grid-template-columns: 72px 1fr auto; gap: 12px; align-items: baseline; padding: 5px 0; border-top: 1px solid rgba(255,255,255,.055); }
+    .utterance-line.is-visible { display: grid; animation: transcriptIn .38s var(--ease); }
+    @keyframes transcriptIn { from { opacity: 0; transform: translateY(8px); } }
+    .utterance-line strong { font: 700 11px/1 var(--display); color: var(--speaker-color); }
+    .utterance-line span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #d6dfe6; font-size: 11px; }
+    .utterance-line time { color: var(--faint); font: 700 10px/1 var(--mono); }
+    .demo-rail { display: grid; grid-template-rows: 1.04fr .96fr; min-width: 0; }
+    .rail-panel { padding: 20px; border-bottom: 1px solid var(--stroke); overflow: hidden; }
+    .rail-panel:last-child { border-bottom: 0; }
+    .rail-head { display: flex; justify-content: space-between; align-items: center; }
+    .rail-head b { font: 700 11px/1 var(--display); color: var(--muted); letter-spacing: .13em; text-transform: uppercase; }
+    .rail-badge { padding: 5px 8px; border-radius: 999px; color: var(--gold); background: rgba(250,250,247,.1); font: 700 9px/1 var(--display); }
+    .claim-state { margin-top: 25px; }
+    .claim-state .type { color: var(--mint); font: 700 11px/1 var(--display); }
+    .claim-state h4 { margin: 9px 0 0; font: 700 20px/1.1 var(--display); letter-spacing: -.02em; }
+    .claim-state p { margin-top: 9px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .source-quote { margin-top: 18px; padding: 14px; border-left: 3px solid var(--gold); background: rgba(4,7,10,.5); border-radius: 0 10px 10px 0; font: italic 13px/1.4 var(--serif); color: #e4e9ed; }
+    .question-card { margin-top: 18px; padding: 14px; border: 1px solid var(--stroke); border-radius: 11px; background: rgba(255,255,255,.025); }
+    .question-card small { color: var(--gold); font: 700 9px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; }
+    .question-card p { margin-top: 8px; font: 650 13px/1.35 var(--display); }
+    .question-card em { display: block; margin-top: 7px; color: var(--muted); font: 400 10px/1.4 var(--body); }
+    .demo-story {
+      position: absolute;
+      z-index: 8;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%,-50%);
+      width: 510px;
+      padding: 28px 30px;
+      border: 1px solid rgba(250,250,247,.28);
+      border-radius: 18px;
+      background: rgba(10,14,20,.94);
+      text-align: center;
+      box-shadow: 0 28px 80px rgba(0,0,0,.58), 0 0 50px rgba(250,250,247,.06);
+      backdrop-filter: blur(14px);
+      transition: opacity .35s, transform .35s;
+    }
+    .demo-story.hidden { opacity: 0; pointer-events: none; transform: translate(-50%,-48%) scale(.96); }
+    .demo-story[hidden] { display: none; }
+    .demo-story h3 { font-size: 27px; }
+    .demo-story p { margin-top: 11px; color: var(--muted); line-height: 1.45; }
+    .demo-story button { margin-top: 19px; padding: 12px 18px; border: 0; border-radius: 10px; background: var(--mint); color: #07110e; cursor: pointer; font: 750 13px/1 var(--display); }
+    .demo-complete { position: absolute; z-index: 7; left: 50%; top: 20px; transform: translateX(-50%) translateY(-8px); padding: 9px 14px; border: 1px solid rgba(250,250,247,.3); border-radius: 999px; color: var(--mint); background: rgba(16,17,21,.92); font: 700 10px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; opacity: 0; visibility: hidden; transition: opacity .4s var(--ease), transform .4s var(--ease), visibility 0s linear .4s; }
+    .demo-complete.show { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); transition-delay: 0s; }
+
+    /* 08 — epistemic state */
+    .truth-slide .pad { display: grid; grid-template-columns: .78fr 1.22fr; gap: 70px; align-items: center; }
+    .truth-slide h2 { margin-top: 22px; max-width: 550px; }
+    .truth-slide .lead { margin-top: 26px; font-size: 21px; }
+    .truth-ledger { border: 1px solid var(--stroke); border-radius: 20px; overflow: hidden; background: rgba(17,24,36,.78); }
+    .ledger-head { display: flex; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--stroke); }
+    .ledger-head b { font: 700 13px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+    .ledger-row { display: grid; grid-template-columns: 120px 1fr 116px; gap: 18px; align-items: center; min-height: 97px; padding: 18px 24px; border-bottom: 1px solid rgba(255,255,255,.07); }
+    .ledger-row:last-child { border-bottom: 0; }
+    .state-pill { width: max-content; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--state-color) 35%, transparent); border-radius: 999px; color: var(--state-color); background: color-mix(in srgb, var(--state-color) 8%, transparent); font: 700 11px/1 var(--display); }
+    .ledger-copy strong { display: block; font: 700 17px/1.2 var(--display); }
+    .ledger-copy span { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
+    .ledger-action { color: var(--state-color); font: 700 11px/1.2 var(--display); text-align: right; }
+
+    /* 09 — correction */
+    .correction .pad { display: flex; flex-direction: column; }
+    .correction h2 { margin-top: 22px; max-width: 1040px; }
+    .correction-flow { margin-top: 65px; display: grid; grid-template-columns: 1fr 160px 1fr; gap: 26px; align-items: center; }
+    .record-card { min-height: 310px; padding: 30px; border: 1px solid var(--stroke); border-radius: 20px; background: rgba(17,24,36,.76); }
+    .record-card .timestamp { font: 700 11px/1 var(--mono); color: var(--faint); }
+    .record-card blockquote { margin: 48px 0 0; font: 400 27px/1.35 var(--serif); }
+    .record-card .record-state { margin-top: 30px; display: flex; gap: 10px; align-items: center; color: var(--record-color); font: 700 12px/1 var(--display); }
+    .append-arrow { display: grid; place-items: center; gap: 12px; color: var(--mint); }
+    .append-arrow .line { width: 110px; height: 1px; background: linear-gradient(90deg, transparent, var(--mint)); position: relative; }
+    .append-arrow .line::after { content: ""; position: absolute; right: 0; top: -4px; width: 8px; height: 8px; border-top: 1px solid var(--mint); border-right: 1px solid var(--mint); transform: rotate(45deg); }
+    .append-arrow span { font: 700 10px/1 var(--display); letter-spacing: .13em; text-transform: uppercase; }
+    .correction .foot-thought { margin-top: auto; display: flex; justify-content: space-between; align-items: center; padding-top: 28px; border-top: 1px solid var(--stroke); }
+    .foot-thought strong { font: 600 25px/1.2 var(--display); }
+    .foot-thought span { color: var(--muted); font-size: 15px; }
+
+    /* 10 — shared complexity */
+    .complexity .pad { padding-bottom: 48px; }
+    .complexity h2 { margin-top: 20px; max-width: 1030px; }
+    .complexity-window { position: absolute; left: 84px; right: 84px; bottom: 46px; height: 492px; border: 1px solid var(--stroke-strong); border-radius: 20px; overflow: hidden; background: var(--panel); }
+    .complexity-window img { width: 100%; height: 100%; object-fit: cover; object-position: center 18%; opacity: .86; }
+    .spotlight { position: absolute; border: 2px solid var(--coral); border-radius: 14px; box-shadow: 0 0 0 999px rgba(3,5,8,.32), 0 0 36px rgba(250,250,247,.16); }
+    .spotlight.friction { left: 42%; top: 42%; width: 170px; height: 91px; }
+    .spotlight.batch { left: 17%; top: 60%; width: 340px; height: 145px; border-color: var(--gold); }
+    .spot-label { position: absolute; top: -34px; left: 0; padding: 7px 10px; border-radius: 8px; color: #190b09; background: var(--coral); font: 750 11px/1 var(--display); white-space: nowrap; }
+    .spotlight.batch .spot-label { color: #1a1203; background: var(--gold); }
+
+    /* 11 — questions */
+    .questions .pad { display: grid; grid-template-columns: .86fr 1.14fr; gap: 70px; align-items: center; }
+    .questions h2 { margin-top: 20px; max-width: 580px; }
+    .questions .lead { margin-top: 25px; max-width: 520px; font-size: 21px; }
+    .question-stack { display: grid; gap: 14px; }
+    .big-question { position: relative; padding: 22px 26px 22px 36px; min-height: 118px; border: 1px solid var(--stroke); border-radius: 16px; background: linear-gradient(105deg, color-mix(in srgb, var(--q-color) 8%, transparent), rgba(255,255,255,.02)); }
+    .big-question::before { content: ""; position: absolute; left: 18px; top: 24px; width: 7px; height: 7px; border-radius: 50%; background: var(--q-color); box-shadow: 0 0 16px var(--q-color); }
+    .big-question small { color: var(--q-color); font: 700 10px/1 var(--display); letter-spacing: .13em; text-transform: uppercase; }
+    .big-question p { margin-top: 10px; font: 650 18px/1.3 var(--display); }
+    .big-question em { display: block; margin-top: 8px; color: var(--muted); font: 400 12px/1.35 var(--body); }
+
+    /* 12 — simulation */
+    .simulation .pad { padding-top: 62px; }
+    .simulation h2 { margin-top: 20px; max-width: 1000px; }
+    .simulator { margin-top: 46px; display: grid; grid-template-columns: 1.42fr .58fr; gap: 24px; height: 490px; }
+    .sim-canvas, .sim-side { border: 1px solid var(--stroke); border-radius: 19px; background: rgba(17,24,36,.76); }
+    .sim-canvas { position: relative; overflow: hidden; background-image: linear-gradient(rgba(255,255,255,.026) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.026) 1px, transparent 1px); background-size: 36px 36px; }
+    .sim-toggle { position: absolute; z-index: 8; top: 18px; left: 18px; display: flex; padding: 4px; border: 1px solid var(--stroke); border-radius: 11px; background: rgba(7,10,14,.82); }
+    .sim-toggle button { padding: 9px 14px; border: 0; border-radius: 8px; color: var(--muted); background: transparent; cursor: pointer; font: 700 11px/1 var(--display); }
+    .sim-toggle button.active { color: #07110e; background: var(--mint); }
+    .sim-disclaimer { position: absolute; z-index: 8; right: 18px; top: 21px; color: var(--gold); font: 700 10px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; }
+    .sim-node { position: absolute; width: 152px; min-height: 62px; padding: 13px 14px; border: 1px solid var(--stroke); border-radius: 12px; background: #151d29; transition: .55s var(--ease); }
+    .sim-node b { display: block; font: 700 13px/1.2 var(--display); }
+    .sim-node span { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
+    .sim-node.s1 { left: 9%; top: 38%; }
+    .sim-node.s2 { left: 40%; top: 38%; }
+    .sim-node.s3 { right: 8%; top: 38%; }
+    .sim-node.s4 { left: 40%; bottom: 11%; border-color: rgba(250,250,247,.4); }
+    .sim-node.future { left: 39%; top: 33%; opacity: 0; visibility: hidden; transform: scale(.8); border-color: rgba(250,250,247,.56); background: rgba(41,44,52,.96); box-shadow: 0 0 34px rgba(250,250,247,.08); }
+    .sim-canvas.proposed .s1 { left: 6%; }
+    .sim-canvas.proposed .s2 { left: 12%; top: 66%; opacity: .55; }
+    .sim-canvas.proposed .s3 { right: 6%; }
+    .sim-canvas.proposed .s4 { opacity: .2; transform: translateY(40px); }
+    .sim-canvas.proposed .future { opacity: 1; visibility: visible; transform: scale(1); }
+    .sim-line { position: absolute; height: 2px; background: rgba(250,250,247,.42); transform-origin: left center; transition: .55s var(--ease); }
+    .sim-line.l1 { left: 23%; top: 45%; width: 190px; }
+    .sim-line.l2 { left: 55%; top: 45%; width: 198px; }
+    .sim-line.l3 { left: 50%; top: 52%; width: 125px; transform: rotate(90deg); background: rgba(250,250,247,.5); }
+    .sim-canvas.proposed .l1 { left: 20%; top: 46%; width: 257px; background: rgba(250,250,247,.56); }
+    .sim-canvas.proposed .l2 { left: 55%; top: 46%; width: 260px; background: rgba(250,250,247,.56); }
+    .sim-canvas.proposed .l3 { opacity: .12; }
+    .sim-side { padding: 24px; }
+    .sim-side h3 { margin-top: 10px; font-size: 23px; }
+    .sim-side > p { margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .sim-metric { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 17px 0; border-bottom: 1px solid var(--stroke); }
+    .sim-metric:first-of-type { margin-top: 22px; }
+    .sim-metric span { color: var(--muted); font-size: 12px; }
+    .sim-metric strong { color: var(--mint); font: 750 13px/1 var(--display); }
+    .assumption { margin-top: 20px; padding: 14px; border: 1px solid rgba(250,250,247,.25); border-radius: 11px; background: rgba(250,250,247,.05); color: var(--gold); font-size: 11px; line-height: 1.45; }
+
+    /* 13 — action pack */
+    .action-slide .pad { padding-bottom: 42px; }
+    .action-slide h2 { margin-top: 20px; max-width: 1060px; }
+    .action-layout { position: absolute; left: 84px; right: 84px; bottom: 42px; height: 485px; display: grid; grid-template-columns: 1.32fr .68fr; gap: 22px; }
+    .action-image { position: relative; border: 1px solid var(--stroke); border-radius: 19px; overflow: hidden; background: var(--panel); }
+    .action-image img { width: 100%; height: 100%; object-fit: cover; object-position: 35% 21%; opacity: .86; }
+    .action-highlight { position: absolute; left: 2.7%; right: 37%; top: 44%; height: 28%; border: 2px solid var(--mint); border-radius: 13px; box-shadow: 0 0 44px rgba(250,250,247,.12), 0 0 0 999px rgba(3,5,8,.28); }
+    .action-summary { padding: 29px; border: 1px solid rgba(250,250,247,.22); border-radius: 19px; background: linear-gradient(150deg, rgba(41,44,52,.86), rgba(29,31,37,.94)); }
+    .action-summary h3 { margin-top: 16px; font-size: 28px; }
+    .action-summary > p { margin-top: 11px; color: var(--muted); font-size: 14px; line-height: 1.45; }
+    .action-rule { display: grid; grid-template-columns: 28px 1fr; gap: 12px; align-items: start; margin-top: 25px; }
+    .action-rule i { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: rgba(250,250,247,.1); color: var(--mint); font-style: normal; font-weight: 800; }
+    .action-rule strong { display: block; font: 700 13px/1.2 var(--display); }
+    .action-rule span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+
+    /* 14 — trust architecture */
+    .architecture .pad { padding-top: 66px; }
+    .architecture h2 { margin-top: 20px; max-width: 980px; }
+    .trust-stack { margin-top: 55px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+    .trust-layer { min-height: 270px; padding: 22px 20px; border-top: 3px solid var(--layer-color); background: linear-gradient(180deg, color-mix(in srgb, var(--layer-color) 9%, transparent), rgba(255,255,255,.018)); }
+    .trust-layer .layer-num { color: var(--layer-color); font: 700 12px/1 var(--mono); }
+    .trust-layer h3 { margin-top: 64px; font-size: 23px; }
+    .trust-layer p { margin-top: 12px; color: var(--muted); font-size: 14px; line-height: 1.48; }
+    .architecture .law { margin-top: 34px; display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border: 1px solid rgba(250,250,247,.22); border-radius: 14px; background: rgba(250,250,247,.04); }
+    .architecture .law strong { font: 650 21px/1.2 var(--display); }
+    .architecture .law span { color: var(--mint); font: 700 12px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; }
+
+    /* 15 — close */
+    .closing .pad { display: flex; flex-direction: column; justify-content: center; }
+    .closing h2 { margin-top: 26px; max-width: 1100px; font-size: 72px; }
+    .closing .lead { margin-top: 32px; max-width: 840px; }
+    .closing-steps { margin-top: 68px; display: flex; gap: 12px; align-items: center; }
+    .closing-step { display: flex; align-items: center; gap: 11px; padding: 14px 17px; border: 1px solid var(--stroke); border-radius: 999px; color: var(--muted); background: rgba(255,255,255,.02); font: 700 12px/1 var(--display); }
+    .closing-step b { color: var(--mint); font-family: var(--mono); }
+    .closing-arrow { color: var(--faint); }
+    .closing .invitation { position: absolute; right: 84px; bottom: 64px; color: var(--mint); font: 700 13px/1 var(--display); letter-spacing: .13em; text-transform: uppercase; }
+    .closing .invitation::after { content: ""; display: inline-block; width: 88px; height: 1px; margin-left: 16px; vertical-align: middle; background: var(--mint); }
+
+    /* Overview + notes */
+    .overview {
+      position: fixed;
+      z-index: 300;
+      inset: 0;
+      display: none;
+      padding: 38px;
+      overflow: auto;
+      background: rgba(5,7,10,.96);
+      backdrop-filter: blur(18px);
+    }
+    .overview.open { display: block; }
+    .overview-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    .overview-head h3 { font-size: 26px; }
+    .overview-grid { display: grid; grid-template-columns: repeat(4, minmax(220px,1fr)); gap: 14px; }
+    .overview-card { min-height: 126px; padding: 16px; border: 1px solid var(--stroke); border-radius: 13px; color: var(--ink); background: rgba(17,24,36,.72); cursor: pointer; text-align: left; }
+    .overview-card:hover { border-color: rgba(250,250,247,.42); transform: translateY(-2px); }
+    .overview-card small { color: var(--mint); font: 700 10px/1 var(--mono); }
+    .overview-card strong { display: block; margin-top: 23px; font: 650 16px/1.25 var(--display); }
+    .overview-card span { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
+
+    .notes-panel {
+      position: fixed;
+      z-index: 250;
+      right: 22px;
+      top: 22px;
+      width: min(430px, calc(100vw - 44px));
+      max-height: calc(100vh - 78px);
+      padding: 24px;
+      overflow: auto;
+      border: 1px solid rgba(250,250,247,.34);
+      border-radius: 16px;
+      color: #e8edf0;
+      background: rgba(13,17,24,.96);
+      box-shadow: 0 26px 70px rgba(0,0,0,.55);
+      backdrop-filter: blur(20px);
+      display: none;
+    }
+    .notes-panel.open { display: block; }
+    .notes-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+    .notes-panel small { color: var(--gold); font: 700 10px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; }
+    .notes-panel h3 { margin-top: 12px; font-size: 21px; }
+    .notes-panel p { margin-top: 14px; color: #bcc7d0; font-size: 14px; line-height: 1.55; white-space: pre-line; }
+    .notes-panel kbd { display: inline-block; margin-top: 18px; padding: 5px 7px; border: 1px solid var(--stroke); border-radius: 6px; color: var(--muted); font: 700 10px var(--mono); }
+
+    /* Scout mark brand system: warm tile, charcoal field, flowing route, grounded signal. */
+    .slide::before {
+      content: "";
+      position: absolute;
+      z-index: 0;
+      right: -190px;
+      bottom: -280px;
+      width: 620px;
+      height: 620px;
+      background: url("../ScoutApp/Resources/ScoutIcon.svg") center / contain no-repeat;
+      filter: grayscale(1) contrast(1.05);
+      opacity: .022;
+      transform: rotate(-8deg);
+      pointer-events: none;
+    }
+    .slide:nth-of-type(even)::before {
+      right: auto;
+      bottom: auto;
+      left: -250px;
+      top: -300px;
+      transform: rotate(16deg);
+    }
+    .slide-grid,
+    .demo-graph,
+    .sim-canvas {
+      background-image:
+        linear-gradient(rgba(250,250,247,.024) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(250,250,247,.024) 1px, transparent 1px);
+    }
+    .progress {
+      background: linear-gradient(90deg, #fafaf7, #a9aaad 58%, #292c34);
+      box-shadow: 0 0 18px rgba(250,250,247,.25);
+    }
+    .eyebrow { text-shadow: none; }
+    .eyebrow::before { box-shadow: 0 0 0 5px rgba(250,250,247,.055); }
+    .brand-mark img {
+      width: 29px;
+      height: 29px;
+      border-radius: 7px;
+      box-shadow: 0 5px 14px rgba(0,0,0,.2);
+    }
+    .display-serif { color: inherit; }
+    .opening .display-serif,
+    .closing .display-serif,
+    .reveal-scout .display-serif { color: #17181c; }
+    .product-frame img,
+    .complexity-window img,
+    .action-image img {
+      filter: grayscale(1) contrast(1.09) brightness(.92);
+    }
+    .product-frame,
+    .utterance-card,
+    .truth-ledger,
+    .record-card,
+    .complexity-window,
+    .sim-canvas,
+    .sim-side,
+    .action-image,
+    .action-summary,
+    .demo-shell {
+      border-radius: 26px;
+    }
+    .private-row,
+    .big-question,
+    .question-card,
+    .ledger-row,
+    .action-rule i,
+    .demo-node,
+    .sim-node {
+      filter: grayscale(1);
+    }
+    .trust-layer {
+      border: 1px solid rgba(250,250,247,.09);
+      border-top: 3px solid var(--layer-color);
+      border-radius: 24px;
+    }
+    .demo-listen,
+    .demo-story button,
+    .sim-toggle button.active {
+      color: #17181c;
+      background: #fafaf7;
+      box-shadow: inset 0 0 0 1px rgba(16,17,21,.08), 0 7px 18px rgba(0,0,0,.16);
+    }
+    .demo-listen.running {
+      color: #fafaf7;
+      background: rgba(250,250,247,.07);
+    }
+    .live-pulse,
+    .demo-complete,
+    .action-summary,
+    .architecture .law {
+      box-shadow: inset 0 0 44px rgba(250,250,247,.018);
+    }
+    .signal-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    /* Warm-white tile moments mirror the logo's outer field. */
+    .opening,
+    .reveal-scout,
+    .closing {
+      color: #17181c;
+      background:
+        radial-gradient(circle at 85% 18%, rgba(41,44,52,.045), transparent 30%),
+        linear-gradient(145deg, #ffffff, #f7f7f3 76%);
+    }
+    .opening::after,
+    .reveal-scout::after,
+    .closing::after { mix-blend-mode: multiply; opacity: .52; }
+    .opening::before,
+    .reveal-scout::before,
+    .closing::before { opacity: .055; mix-blend-mode: multiply; }
+    .opening .brand-mark,
+    .opening .chapter-number,
+    .reveal-scout .brand-mark,
+    .reveal-scout .chapter-number,
+    .closing .brand-mark,
+    .closing .chapter-number { color: #292c34; }
+    .opening .eyebrow,
+    .reveal-scout .eyebrow,
+    .closing .eyebrow { color: #292c34; }
+    .opening .lead,
+    .reveal-scout .lead,
+    .closing .lead,
+    .reveal-scout .promise p { color: #55575d; }
+    .opening h1 { max-width: 820px; font-size: 74px; }
+    .opening .lead { max-width: 720px; }
+    .opening .human-orbit { display: none; }
+    .opening .signal { right: 76px; bottom: 28px; width: 510px; height: 240px; opacity: .24; }
+    .hero-logo {
+      position: absolute;
+      z-index: 3;
+      right: 82px;
+      top: 150px;
+      width: 430px;
+      height: 430px;
+      object-fit: contain;
+      filter: drop-shadow(0 24px 42px rgba(19,21,26,.16));
+    }
+    .reveal-scout .scout-word,
+    .reveal-scout .promise h3 { color: #17181c; }
+    .reveal-scout .promise { border-color: rgba(23,24,28,.14); }
+    .reveal-scout .promise-index { color: #292c34; }
+    .closing .closing-step {
+      color: #55575d;
+      border-color: rgba(23,24,28,.17);
+      background: rgba(255,255,255,.46);
+    }
+    .closing .closing-step b,
+    .closing .invitation { color: #17181c; }
+    .closing .closing-arrow { color: #73747a; }
+    .closing .invitation::after { background: #17181c; }
+
+    /* The single signal stays visible through tone and shape, not an extra accent hue. */
+    .private-row,
+    .big-question { border-color: rgba(250,250,247,.12); }
+    .spotlight,
+    .spotlight.batch,
+    .action-highlight { border-color: #fafaf7; }
+    .spot-label,
+    .spotlight.batch .spot-label {
+      color: #17181c;
+      background: #fafaf7;
+    }
+    .source-quote,
+    .assumption { border-color: rgba(250,250,247,.34); }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" id="progress" role="progressbar" aria-label="Presentation progress" aria-valuemin="1" aria-valuemax="15" aria-valuenow="1" aria-valuetext="Slide 1 of 15"></div>
+
+  <main class="viewport" id="presentationViewport" aria-label="Scout presentation">
+    <div class="stage" id="stage">
+      <section class="slide opening active" data-title="The software was ready. The room wasn’t." data-subtitle="The human blocker" data-notes="Pause after the first sentence. Let the room feel the tension.\n\nTechnology is moving faster than our ability to form shared conviction around it. The blocker is often not whether a system can be built. It is whether the people in the room trust the understanding, trust the boundaries, and trust themselves enough to move.\n\nScout begins from that human truth.">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">01 / THE HUMAN BLOCKER</div>
+        <img class="hero-logo reveal" style="--d:.18s" src="../ScoutApp/Resources/ScoutIcon.svg" alt="Scout mark: a flowing route revealing one grounded signal" />
+        <div class="human-orbit"></div>
+        <div class="pad">
+          <div class="eyebrow reveal">Enterprise transformation has a trust problem</div>
+          <h1 class="reveal" style="--d:.12s">The software was ready.<br><span class="display-serif mint">The room wasn’t.</span></h1>
+          <p class="lead reveal" style="--d:.26s">A frequent blocker to adopting technology is the trust we have in our understanding, our systems, and one another.</p>
+        </div>
+        <svg class="signal" viewBox="0 0 760 380" aria-hidden="true">
+          <path d="M0 218 C42 218 42 218 70 218 C91 218 95 170 112 170 C129 170 131 262 151 262 C170 262 175 118 196 118 C218 118 219 297 244 297 C269 297 270 179 294 179 C322 179 324 225 348 225 C382 225 383 62 410 62 C439 62 439 327 468 327 C493 327 499 197 526 197 C555 197 558 240 586 240 C620 240 621 126 648 126 C678 126 682 218 711 218 L760 218" fill="none" stroke="url(#wave)" stroke-width="3"/>
+          <defs><linearGradient id="wave" x1="0" x2="1"><stop stop-color="#292c34" stop-opacity="0"/><stop offset=".4" stop-color="#292c34"/><stop offset="1" stop-color="#17181c" stop-opacity="0"/></linearGradient></defs>
+        </svg>
+      </section>
+
+      <section class="slide division" data-title="One call. Five private realities." data-subtitle="Division begins quietly" data-notes="A discovery call sounds singular, but it rarely produces one shared reality. Each person hears through their own responsibilities.\n\nThe executive hears risk. The architect hears dependencies. The builder hears scope. Operations hears disruption. The customer hears whether we understood them.\n\nNothing here is malicious. It is simply human—and every later handoff magnifies it.">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">02 / DIVISION</div>
+        <div class="division-line"></div>
+        <div class="pad">
+          <div class="eyebrow coral reveal">Division begins quietly</div>
+          <h2 class="reveal" style="--d:.1s">One conversation becomes <span class="display-serif coral">several private realities.</span></h2>
+          <div class="reality-split">
+            <div class="utterance-card reveal" style="--d:.22s">
+              <div class="small-caps">Illustrative fictional scenario · not customer evidence</div>
+              <blockquote>“We need to cut order exception resolution from two days to under two hours.”</blockquote>
+              <div class="speaker">Maya · Customer operations</div>
+            </div>
+            <div class="private-realities">
+              <div class="private-row reveal" style="--d:.28s; --row-color:var(--gold)"><strong>Executive</strong><span>“How quickly can value become visible?”</span></div>
+              <div class="private-row reveal" style="--d:.34s; --row-color:var(--violet)"><strong>Architect</strong><span>“Which boundaries cannot move?”</span></div>
+              <div class="private-row reveal" style="--d:.40s; --row-color:var(--blue)"><strong>Builder</strong><span>“What exactly should we build first?”</span></div>
+              <div class="private-row reveal" style="--d:.46s; --row-color:var(--mint)"><strong>Operations</strong><span>“What breaks while we change it?”</span></div>
+              <div class="private-row reveal" style="--d:.52s; --row-color:var(--coral)"><strong>Customer</strong><span>“Did they actually understand us?”</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide distance" data-title="We ask people to trust a future they cannot see." data-subtitle="The trust tax" data-notes="Walk from left to right. Each handoff is individually reasonable. Together they create distance from the source.\n\nBy the time a prototype comes back, the customer is often seeing our interpretation for the first time. That is too late for trust to be a correction mechanism.\n\nThe question is: what if the transformation became visible while the conversation was still happening?">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">03 / THE TRUST TAX</div>
+        <div class="pad">
+          <div>
+            <div class="eyebrow gold reveal">Every handoff adds distance</div>
+            <h2 class="reveal" style="--d:.1s">We ask people to trust a future <span class="display-serif gold">they cannot yet see.</span></h2>
+          </div>
+          <div class="handoff-chain">
+            <div class="handoff-step reveal" style="--d:.20s"><div class="num">01</div><h3>Conversation</h3><p>Nuance is rich, but trapped in the room.</p></div>
+            <div class="handoff-step reveal" style="--d:.28s"><div class="num">02</div><h3>Notes</h3><p>Signal is compressed into a private summary.</p></div>
+            <div class="handoff-step reveal" style="--d:.36s"><div class="num">03</div><h3>Interpretation</h3><p>Assumptions quietly become requirements.</p></div>
+            <div class="handoff-step reveal" style="--d:.44s"><div class="num">04</div><h3>Build</h3><p>Teams execute against a distant version of truth.</p></div>
+            <div class="handoff-step reveal" style="--d:.52s"><div class="num">05</div><h3>Surprise</h3><p>The customer finally sees what everyone meant.</p></div>
+          </div>
+        </div>
+        <div class="entropy"></div>
+      </section>
+
+      <section class="slide shared" data-title="Trust changes when understanding becomes visible." data-subtitle="The shared object" data-notes="This is the turn in the story. Trust is not created by asking people to believe harder. It changes when everyone can inspect the same object.\n\nPeople can see what was heard, challenge an inference, expose a missing question, or shape a future-state idea together.\n\nThe tool does not replace human connection. It gives that connection a shared surface.">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">04 / THE SHARED OBJECT</div>
+        <div class="pad">
+          <div>
+            <div class="eyebrow reveal">A different starting point</div>
+            <h2 class="reveal" style="--d:.1s">Trust changes when understanding becomes <span class="display-serif mint">visible.</span></h2>
+            <p class="lead reveal" style="--d:.22s">Not a summary after the call. A living object everyone can see, challenge, and shape together.</p>
+          </div>
+          <div class="shared-canvas reveal" style="--d:.26s">
+            <div class="shared-ring"></div>
+            <div class="shared-core">Shared<br>customer reality</div>
+            <div class="human h1" style="--human-color:var(--gold)">CUSTOMER</div>
+            <div class="human h2" style="--human-color:var(--violet)">ARCHITECT</div>
+            <div class="human h3" style="--human-color:var(--blue)">BUILDER</div>
+            <div class="human h4" style="--human-color:var(--mint)">OPERATIONS</div>
+            <div class="orbit-word ow1" style="--human-color:var(--cyan)">See</div>
+            <div class="orbit-word ow2" style="--human-color:var(--coral)">Challenge</div>
+            <div class="orbit-word ow3" style="--human-color:var(--mint)">Shape</div>
+            <div class="orbit-word ow4" style="--human-color:var(--gold)">Trust</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide reveal-scout" data-title="Meet Scout." data-subtitle="Live discovery becomes a customer model" data-notes="Scout is a Mac-first real-time discovery engine for builders in the enterprise world.\n\nIt listens with explicit consent, preserves evidence, and turns the conversation into a revisable model of people, systems, data, processes, policies, goals, and friction.\n\nThe important verb is not ‘summarize.’ It is ‘make inspectable.’">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">05 / MEET SCOUT</div>
+        <div class="pad">
+          <div>
+            <div class="eyebrow cyan reveal">Live customer discovery, made inspectable</div>
+            <div class="scout-word reveal" style="--d:.1s">Scout.</div>
+            <p class="lead reveal" style="--d:.22s">An evidence-linked customer model that forms while builders and customers are still in the room.</p>
+          </div>
+          <div class="promise-stack">
+            <div class="promise reveal" style="--d:.20s; --promise-color:var(--cyan)"><div class="promise-index">01</div><div><h3>Hear the real system</h3><p>Capture outcomes, actors, processes, constraints, and contradictions from the live conversation.</p></div></div>
+            <div class="promise reveal" style="--d:.30s; --promise-color:var(--gold)"><div class="promise-index">02</div><div><h3>Show what deserves trust</h3><p>Keep evidence, claims, confidence, validation, and proposals visibly distinct.</p></div></div>
+            <div class="promise reveal" style="--d:.40s; --promise-color:var(--mint)"><div class="promise-index">03</div><div><h3>Turn understanding into motion</h3><p>Reveal gaps, simulate safer futures, and hand only approved context to the build.</p></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide product-picture" data-title="The room sees the same reality taking shape." data-subtitle="Product reveal" data-notes="This is the product reveal before the interactive demo. Point to the graph, the evidence inspector, and the gap radar.\n\nThe graph is not decoration. Every item has a provenance and validation state. The inspector shows its supporting excerpt and canonical evidence identity; exact audio-range navigation remains future work. The gap radar uses what is missing to help the builder ask a better next question.\n\nThen say: let me show you what that feels like in the call.">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">06 / PRODUCT REVEAL</div>
+        <div class="pad">
+          <div class="eyebrow reveal">The experience begins in the call</div>
+          <h2 class="reveal" style="--d:.1s">The room sees the same reality <span class="display-serif mint">taking shape.</span></h2>
+        </div>
+        <div class="live-pulse reveal" style="--d:.32s"><i></i> Live discovery</div>
+        <div class="product-frame reveal" style="--d:.24s"><img src="../docs/audit/F0E3B8B2-2D1B-4E87-AB48-208329F269A8.png" alt="Scout live discovery workspace showing a customer architecture graph, trust inspector, and next questions" /></div>
+      </section>
+
+      <section class="slide demo-slide" data-title="Interactive simulation: Northstar Retail" data-subtitle="Let the model form" data-notes="This is a fictional, scripted product simulation—not a live customer session or operational proof. Click ‘Start simulation’ in the center. Let it advance automatically, or use the top-right control to pause and continue.\n\nNarrate three moments: first, the business outcome appears; second, the batch handoff and manual re-keying reveal the real roadblock; third, the stated data boundary remains visibly unvalidated.\n\nNotice that Scout proposes a question when the model reveals a gap. A human still decides what to ask, what to validate, and what to approve.">
+        <div class="pad">
+          <div class="demo-shell">
+            <div class="demo-top">
+              <div class="demo-title"><strong>Northstar Retail <span>/ Order intelligence discovery</span></strong><small>Fictional scenario · scripted values · no customer data</small></div>
+              <div class="demo-metrics">
+                <div class="demo-metric"><b id="demoTime">30:30</b> elapsed</div>
+                <div class="demo-metric"><b>3</b> speakers</div>
+                <div class="demo-metric"><b id="demoCoverage">1 / 4</b> claims surfaced</div>
+              </div>
+              <button class="demo-listen" id="demoListen" type="button" aria-label="Play discovery simulation" disabled>▶ Play</button>
+            </div>
+            <div class="demo-body">
+              <div class="demo-main">
+                <div class="demo-graph">
+                  <div class="graph-label"><span class="small-caps">Living customer model</span><strong>Current-state architecture</strong></div>
+                  <div class="demo-complete" id="demoComplete" aria-hidden="true">Illustrative model captured · validation and approval still required</div>
+                  <svg class="demo-svg" viewBox="0 0 1000 500" preserveAspectRatio="none" aria-hidden="true">
+                    <path class="demo-edge is-visible friction" data-step="0" d="M142 164 C230 160 255 160 335 162"/>
+                    <path class="demo-edge" data-step="1" d="M195 330 C242 361 282 392 365 410"/>
+                    <path class="demo-edge friction" data-step="1" d="M435 412 C474 374 505 348 530 330"/>
+                    <path class="demo-edge" data-step="1" d="M535 325 C494 272 446 217 401 179"/>
+                    <path class="demo-edge friction" data-step="2" d="M772 172 C660 168 578 166 477 165"/>
+                    <path class="demo-edge friction" data-step="2" d="M790 328 C795 282 794 230 787 190"/>
+                    <path class="demo-edge" data-step="3" d="M848 418 C835 385 822 359 800 335"/>
+                  </svg>
+                  <div class="demo-node node-goal is-visible is-active" data-step="0"><b>Resolve in &lt; 2h</b><span>Business outcome</span></div>
+                  <div class="demo-node node-process is-visible" data-step="0"><b>Order exceptions</b><span>Current workflow</span></div>
+                  <div class="demo-node node-rekey" data-step="2"><b>Manual re-keying</b><span>3 handoffs</span></div>
+                  <div class="demo-node node-sf" data-step="1"><b>Salesforce</b><span>Customer record</span></div>
+                  <div class="demo-node node-csv" data-step="1"><b>Nightly CSV</b><span>Batch handoff</span></div>
+                  <div class="demo-node node-ns" data-step="1"><b>NetSuite</b><span>Inventory system</span></div>
+                  <div class="demo-node node-zd" data-step="2"><b>Zendesk</b><span>Support workspace</span></div>
+                  <div class="demo-node node-policy" data-step="3"><b>EU data boundary</b><span>No PII in integration</span></div>
+                </div>
+                <div class="demo-transcript">
+                  <div class="transcript-head"><b>Live transcript</b><span class="small-caps" id="demoClaims">1 source-linked claim</span></div>
+                  <div class="utterance-line is-visible" data-step="0" style="--speaker-color:var(--mint)"><strong>Maya</strong><span>We need to cut order exception resolution from two days to under two hours, without adding headcount.</span><time>30:30</time></div>
+                  <div class="utterance-line" data-step="1" style="--speaker-color:var(--coral)"><strong>Raj</strong><span>Salesforce owns the customer record. NetSuite owns inventory, but the two only reconcile through a nightly CSV export.</span><time>30:46</time></div>
+                  <div class="utterance-line" data-step="2" style="--speaker-color:var(--mint)"><strong>Maya</strong><span>Support agents copy order IDs from Zendesk into both systems. Most exceptions need three handoffs.</span><time>30:58</time></div>
+                  <div class="utterance-line" data-step="3" style="--speaker-color:var(--coral)"><strong>Raj</strong><span>Order status and IDs can cross the EU boundary, but names, emails, and addresses cannot.</span><time>31:11</time></div>
+                </div>
+              </div>
+              <aside class="demo-rail">
+                <div class="rail-panel">
+                  <div class="rail-head"><b>Evidence inspector</b><span class="rail-badge" id="demoBadge">Heard</span></div>
+                  <div class="claim-state">
+                    <div class="type" id="demoType">● Goal</div>
+                    <h4 id="demoClaimTitle">Two-hour resolution target</h4>
+                    <p id="demoClaimDetail">Order exceptions should be resolved in under two hours without increasing headcount.</p>
+                    <div class="source-quote" id="demoQuote">“...cut order exception resolution from two days to under two hours...”</div>
+                  </div>
+                </div>
+                <div class="rail-panel">
+                  <div class="rail-head"><b>Gap radar · Ask next</b><span class="rail-badge" id="demoOpen">1 open</span></div>
+                  <div class="question-card"><small id="demoQTopic">Success metric</small><p id="demoQuestion">How is exception resolution time measured today?</p><em id="demoRationale">A trusted baseline is needed to prove the two-hour outcome.</em></div>
+                </div>
+              </aside>
+            </div>
+            <div class="demo-story" id="demoStory">
+              <div class="eyebrow">Fictional product walkthrough</div>
+              <h3 style="margin-top:16px">Let the customer model form.</h3>
+              <p>Scripted data illustrates how heard statements can become outcomes, dependencies, friction, constraints, and proposed next questions.</p>
+              <button id="demoStart" type="button">Start simulation</button>
+            </div>
+            <div class="sr-only" id="demoStatus" role="status" aria-live="polite" aria-atomic="true"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide truth-slide" data-title="Scout shows what deserves trust." data-subtitle="Truth has a visible state" data-notes="The model does not get to call itself true. Scout keeps independent dimensions visible: how something entered the system, whether it has been reviewed, how confident the capture was, whether evidence is available, and whether another stakeholder contradicts it.\n\nConfidence is not truth. A recommendation remains a proposal. A confirmed claim still points to immutable evidence.\n\nThis is how speed and rigor stop being opposites.">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">08 / VISIBLE TRUST</div>
+        <div class="pad">
+          <div>
+            <div class="eyebrow gold reveal">Truth has a visible state</div>
+            <h2 class="reveal" style="--d:.1s">Scout does not decide what is true. It shows <span class="display-serif gold">what deserves trust.</span></h2>
+            <p class="lead reveal" style="--d:.22s">Confidence is not truth. Inference is not evidence. A proposal is not a decision.</p>
+          </div>
+          <div class="truth-ledger reveal" style="--d:.28s">
+            <div class="ledger-head"><b>Claims ledger · fictional example</b><span class="small-caps">Canonical events are append-only</span></div>
+            <div class="ledger-row" style="--state-color:var(--cyan)"><div class="state-pill">Heard</div><div class="ledger-copy"><strong>Inventory reconciliation is batch-only</strong><span>Exact source linked · Raj · 30:46</span></div><div class="ledger-action">Show source →</div></div>
+            <div class="ledger-row" style="--state-color:var(--indigo)"><div class="state-pill">Inferred</div><div class="ledger-copy"><strong>Batch latency may drive stale stock</strong><span>Derived from two linked claims · needs validation</span></div><div class="ledger-action">Challenge →</div></div>
+            <div class="ledger-row" style="--state-color:var(--gold)"><div class="state-pill">Proposed</div><div class="ledger-copy"><strong>Inventory feed sentinel</strong><span>Recommendation · not customer fact</span></div><div class="ledger-action">Review →</div></div>
+            <div class="ledger-row" style="--state-color:var(--violet)"><div class="state-pill">Needs review</div><div class="ledger-copy"><strong>No PII may cross the EU boundary</strong><span>Heard from Raj · control and authority not yet validated</span></div><div class="ledger-action">Validate →</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide correction" data-title="Correction becomes a source of trust." data-subtitle="Claims are never silently rewritten" data-notes="Trust does not require Scout to be perfect. It requires Scout to preserve what was recorded and make later evidence visible.\n\nIn the current build, a later claim can coexist with or supersede an earlier unreviewed claim through append-only events; claim review is also append-only. A direct transcript-correction editor and first-class conflict-resolution state remain product targets.\n\nThat is more honest than a polished summary that silently hides disagreement.">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">09 / THE CORRECTION LOOP</div>
+        <div class="pad">
+          <div class="eyebrow reveal">Trust does not require perfection</div>
+          <h2 class="reveal" style="--d:.1s">Correction becomes a <span class="display-serif mint">source of trust.</span></h2>
+          <div class="correction-flow">
+            <div class="record-card reveal" style="--d:.22s; --record-color:var(--cyan)">
+              <div class="timestamp">CLAIM 0042 · HEARD</div>
+              <blockquote>“The export runs every night.”</blockquote>
+              <div class="record-state">● Earlier evidence remains preserved</div>
+            </div>
+            <div class="append-arrow reveal" style="--d:.34s"><div class="line"></div><span>Append later evidence</span></div>
+            <div class="record-card reveal" style="--d:.44s; --record-color:var(--mint)">
+              <div class="timestamp">CLAIM 0051 · LATER EVIDENCE</div>
+              <blockquote>“Correction: it runs at 2 a.m., and failures are silent.”</blockquote>
+              <div class="record-state">● New claim recorded · review still required</div>
+            </div>
+          </div>
+          <div class="foot-thought reveal" style="--d:.55s"><strong>People can challenge the model without breaking history.</strong><span>Automatic conflict detection and resolution are not implemented yet.</span></div>
+        </div>
+      </section>
+
+      <section class="slide complexity" data-title="Complexity becomes a shared object." data-subtitle="See the system and its friction" data-notes="Point to the two highlighted areas. Scout makes the system legible as a connected reality: the nightly batch handoff, the manual re-keying, the business goal, and the data policy.\n\nPeople can finally see where the roadblock lives—not as blame, but as structure.\n\nThe visual is always a projection. Selecting a node opens its exact selected claim and canonical evidence identity; collision-aware relationship labels and exact audio-region navigation remain open work.">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">10 / SEE THE SYSTEM</div>
+        <div class="pad">
+          <div class="eyebrow coral reveal">Complexity without the fog</div>
+          <h2 class="reveal" style="--d:.1s">The roadblocks become visible <span class="display-serif coral">without becoming blame.</span></h2>
+        </div>
+        <div class="complexity-window reveal" style="--d:.22s">
+          <img src="../docs/audit/F0E3B8B2-2D1B-4E87-AB48-208329F269A8.png" alt="Scout current-state architecture graph" />
+          <div class="spotlight friction"><span class="spot-label">3 manual handoffs</span></div>
+          <div class="spotlight batch"><span class="spot-label">Nightly batch dependency</span></div>
+        </div>
+      </section>
+
+      <section class="slide questions" data-title="The gaps help Scout propose what to ask next." data-subtitle="Unknowns become productive" data-notes="A good discovery engine should not merely sound certain. It should expose where certainty is missing.\n\nScout proposes these questions from visible gaps in the model: success metric, volume, guardrail, and failure mode. The questions remain suggestions; the builder chooses what is appropriate to ask.\n\nThis changes the energy of the call. The room can follow the emerging system toward the next important unknown without pretending the model has decided for them.">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">11 / ASK BETTER</div>
+        <div class="pad">
+          <div>
+            <div class="eyebrow gold reveal">Unknowns become productive</div>
+            <h2 class="reveal" style="--d:.1s">The gaps help Scout propose <span class="display-serif gold">what to ask next.</span></h2>
+            <p class="lead reveal" style="--d:.22s">Gaps stop hiding in meeting notes. They become the next moment of human connection.</p>
+          </div>
+          <div class="question-stack">
+            <div class="big-question reveal" style="--d:.22s; --q-color:var(--gold)"><small>Success metric</small><p>How is exception resolution time measured today?</p><em>A trusted baseline is needed to prove the two-hour outcome.</em></div>
+            <div class="big-question reveal" style="--d:.30s; --q-color:var(--coral)"><small>Volume</small><p>How many order exceptions and manual handoffs occur per day?</p><em>Volume determines the upside and the capacity target.</em></div>
+            <div class="big-question reveal" style="--d:.38s; --q-color:var(--violet)"><small>Guardrail</small><p>Which control validates payloads before they leave the EU boundary?</p><em>The proof of value must inherit or explicitly implement it.</em></div>
+            <div class="big-question reveal" style="--d:.46s; --q-color:var(--cyan)"><small>Failure mode</small><p>Who owns the response when the nightly export does not arrive?</p><em>Ownership completes the operating model, not just the architecture.</em></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide simulation" data-title="A future you can interrogate—not just imagine." data-subtitle="Future-state simulation" data-notes="Use the Current / Proposed toggle. The proposed state adds a read-only inventory feed sentinel.\n\nEmphasize the amber label: this is a proposal, not a customer fact. Scout lets the room experience a future state without pretending the future is already true.\n\nPeople can inspect assumptions, constraints, and success measures before anyone commits to a build.">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">12 / SIMULATE SAFELY</div>
+        <div class="pad">
+          <div class="eyebrow cyan reveal">Make the future discussable</div>
+          <h2 class="reveal" style="--d:.1s">A future you can interrogate—<span class="display-serif cyan">not just imagine.</span></h2>
+          <div class="simulator reveal" style="--d:.22s">
+            <div class="sim-canvas" id="simCanvas">
+              <div class="sim-toggle" role="group" aria-label="Future-state view"><button class="active" data-sim="current" type="button" aria-pressed="true">Current state</button><button data-sim="proposed" type="button" aria-pressed="false">Proposed state</button></div>
+              <div class="sim-disclaimer" id="simLabel">Evidence-linked current state</div>
+              <div class="sim-line l1"></div><div class="sim-line l2"></div><div class="sim-line l3"></div>
+              <div class="sim-node s1"><b>Salesforce</b><span>Customer record</span></div>
+              <div class="sim-node s2"><b>Nightly CSV</b><span>2 a.m. batch</span></div>
+              <div class="sim-node s3"><b>NetSuite</b><span>Inventory system</span></div>
+              <div class="sim-node s4"><b>Silent failure</b><span>Discovered by tickets</span></div>
+              <div class="sim-node future" aria-hidden="true"><b>Inventory feed sentinel</b><span>Read-only monitoring + alert</span></div>
+            </div>
+            <div class="sim-side" id="simSummary" role="status" aria-live="polite" aria-atomic="true">
+              <div class="eyebrow gold" id="simEyebrow">Current-state evidence</div>
+              <h3 id="simTitle">Batch failures surface through customers.</h3>
+              <p id="simBody">The current model shows a delayed, silent handoff between systems of record.</p>
+              <div class="sim-metric"><span>Outcome</span><strong id="simOutcome">Resolve in &lt; 2h</strong></div>
+              <div class="sim-metric"><span>System mutation</span><strong id="simMutation">None proposed</strong></div>
+              <div class="sim-metric"><span>Time boundary</span><strong id="simBoundary">Observed nightly</strong></div>
+              <div class="assumption" id="simAssumption">Current-state connections are evidence-linked. Select “Proposed state” to explore a bounded future.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide action-slide" data-title="A bounded candidate emerges from evidence and assumptions." data-subtitle="Build from approved understanding" data-notes="The action pack is not a pile of ideas. It ranks proposed opportunities by evidence, impact, effort, and readiness, then scopes a candidate proof of value.\n\nHere the candidate is a read-only inventory feed sentinel: detect missing or anomalous exports before the customer feels the failure. Its 3–5 day estimate is an engineering assumption that still needs an owner and validation.\n\nThe handoff remains gated. Only when the supporting factual claims are validated, assumptions are owned, and the exact bounded context is explicitly approved can Codex receive it.">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">13 / BUILD WITH CONVICTION</div>
+        <div class="pad">
+          <div class="eyebrow reveal">Evidence becomes responsible action</div>
+          <h2 class="reveal" style="--d:.1s">A responsible first candidate emerges <span class="display-serif mint">from evidence and assumptions.</span></h2>
+        </div>
+        <div class="action-layout">
+          <div class="action-image reveal" style="--d:.22s"><img src="../docs/audit/65008296-52A4-4B9D-BF6E-4CD6432CF50E.png" alt="Scout action pack showing ranked quick wins and an explicit approval gate" /><div class="action-highlight"></div></div>
+          <div class="action-summary reveal" style="--d:.32s">
+            <div class="eyebrow cyan">Proposed proof of value · approval required</div>
+            <h3>Inventory feed sentinel</h3>
+            <p>Detect missing or anomalous exports and notify operations before customer impact.</p>
+            <div class="action-rule"><i>✓</i><div><strong>Read-only and reversible</strong><span>No production writes in the first build.</span></div></div>
+            <div class="action-rule"><i>↗</i><div><strong>3–5 day engineering assumption</strong><span>Owner and estimate validation required before approval.</span></div></div>
+            <div class="action-rule"><i>⌁</i><div><strong>Evidence-linked handoff</strong><span>Claims, constraints, and acceptance criteria stay traceable; open questions remain visible in Scout and outside approved build context.</span></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide architecture" data-title="Trust is built into the system boundary." data-subtitle="OpenAI proposes. Scout commits." data-notes="This is the technical confidence slide. Scout separates evidence, utterances, claims, the reality graph, and projections.\n\nThe append-only event log is canonical. Models propose structured data; deterministic Scout code validates and commits. Every active factual claim resolves to immutable evidence. Contradictions coexist until review.\n\nThe final handoff excludes raw audio, unrestricted transcripts, and source image bytes by default. OpenAI proposes. Scout validates, versions, stores, and explains.">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">14 / TRUST AS INFRASTRUCTURE</div>
+        <div class="pad">
+          <div class="eyebrow reveal">Trust is a product surface—and a system boundary</div>
+          <h2 class="reveal" style="--d:.1s">Understanding stays layered, <span class="display-serif mint">replayable, and accountable.</span></h2>
+          <div class="trust-stack">
+            <div class="trust-layer reveal" style="--d:.18s; --layer-color:var(--cyan)"><div class="layer-num">01</div><h3>Evidence</h3><p>Immutable source anchors are preserved before claims are accepted.</p></div>
+            <div class="trust-layer reveal" style="--d:.24s; --layer-color:var(--blue)"><div class="layer-num">02</div><h3>Utterances</h3><p>Finalized utterances retain timing and source links; dedicated revision and speaker mapping are next.</p></div>
+            <div class="trust-layer reveal" style="--d:.30s; --layer-color:var(--gold)"><div class="layer-num">03</div><h3>Claims</h3><p>Atomic propositions carry attribution, confidence, validation, and evidence.</p></div>
+            <div class="trust-layer reveal" style="--d:.36s; --layer-color:var(--mint)"><div class="layer-num">04</div><h3>Reality graph</h3><p>Deterministic code reduces valid claims into a revisable customer model.</p></div>
+            <div class="trust-layer reveal" style="--d:.42s; --layer-color:var(--violet)"><div class="layer-num">05</div><h3>Projections</h3><p>Diagrams, gaps, simulations, and action packs are rebuildable views.</p></div>
+          </div>
+          <div class="law reveal" style="--d:.52s"><strong>OpenAI proposes. Scout validates and commits. Codex builds from approved context.</strong><span>Only approved context moves to build</span></div>
+        </div>
+      </section>
+
+      <section class="slide closing" data-title="The first call becomes the first act of transformation." data-subtitle="Feel the change before the build" data-notes="Resolve the opening. The software can be ready, but the room becomes ready when people can see and shape the transformation together.\n\nScout gives builders and customers a way to experience the change from the beginning: a shared model, visible trust, a safer proposed future, and an approved path to action.\n\nClose with the invitation: bring a real discovery call. Let the room feel the transformation before the first line of the proof of value is built.">
+        <div class="brand-mark"><img src="../ScoutApp/Resources/Assets.xcassets/ScoutMark.imageset/scout-mark.png" alt="" /> Scout</div>
+        <div class="chapter-number">15 / THE INVITATION</div>
+        <div class="pad">
+          <div class="eyebrow reveal">Transformation people can feel</div>
+          <h2 class="reveal" style="--d:.1s">The first call becomes the <span class="display-serif mint">first act of transformation.</span></h2>
+          <p class="lead reveal" style="--d:.24s">Let people see the system. Challenge the understanding. Shape the future. Approve the first safe move—together.</p>
+          <div class="closing-steps reveal" style="--d:.36s">
+            <div class="closing-step"><b>01</b> Hear</div><div class="closing-arrow">→</div>
+            <div class="closing-step"><b>02</b> See</div><div class="closing-arrow">→</div>
+            <div class="closing-step"><b>03</b> Challenge</div><div class="closing-arrow">→</div>
+            <div class="closing-step"><b>04</b> Simulate</div><div class="closing-arrow">→</div>
+            <div class="closing-step"><b>05</b> Build</div>
+          </div>
+          <div class="invitation reveal" style="--d:.5s">Bring a live discovery call</div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <nav class="controls" id="presentationControls" aria-label="Presentation controls">
+    <button class="control-btn" id="overviewBtn" type="button" title="Overview (O)" aria-label="Open slide overview" aria-controls="overview" aria-expanded="false">⌘</button>
+    <button class="control-btn" id="notesBtn" type="button" title="Speaker notes (N)" aria-label="Open speaker notes" aria-controls="notesPanel" aria-expanded="false">N</button>
+    <button class="control-btn" id="prevBtn" type="button" title="Previous slide (←)" aria-label="Previous slide">←</button>
+    <div class="counter" id="counter" role="status" aria-live="polite" aria-atomic="true">01 / 15</div>
+    <button class="control-btn" id="nextBtn" type="button" title="Next slide (→)" aria-label="Next slide">→</button>
+    <button class="control-btn" id="fullBtn" type="button" title="Fullscreen (F)" aria-label="Enter fullscreen" aria-pressed="false">⛶</button>
+  </nav>
+
+  <aside class="notes-panel" id="notesPanel" role="region" aria-label="Private speaker notes" aria-live="polite" hidden>
+    <div class="notes-head"><small>Private speaker notes</small><button class="control-btn" id="notesClose" type="button" aria-label="Close speaker notes">Close</button></div>
+    <h3 id="notesTitle"></h3>
+    <p id="notesCopy"></p>
+    <kbd>N</kbd> to close
+  </aside>
+
+  <div class="overview" id="overview" role="dialog" aria-modal="true" aria-labelledby="overviewTitle" hidden>
+    <div class="overview-head"><h3 id="overviewTitle">Scout story map</h3><button class="control-btn" id="overviewClose" type="button" aria-label="Close slide overview">Close</button></div>
+    <div class="overview-grid" id="overviewGrid"></div>
+  </div>
+
+  <script>
+    (() => {
+      const stage = document.getElementById('stage');
+      const slides = [...document.querySelectorAll('.slide')];
+      const progress = document.getElementById('progress');
+      const counter = document.getElementById('counter');
+      const viewport = document.getElementById('presentationViewport');
+      const controls = document.getElementById('presentationControls');
+      const notesPanel = document.getElementById('notesPanel');
+      const notesTitle = document.getElementById('notesTitle');
+      const notesCopy = document.getElementById('notesCopy');
+      const overview = document.getElementById('overview');
+      const overviewGrid = document.getElementById('overviewGrid');
+      const overviewBtn = document.getElementById('overviewBtn');
+      const notesBtn = document.getElementById('notesBtn');
+      const prevBtn = document.getElementById('prevBtn');
+      const nextBtn = document.getElementById('nextBtn');
+      const fullBtn = document.getElementById('fullBtn');
+      const notesClose = document.getElementById('notesClose');
+      const overviewClose = document.getElementById('overviewClose');
+      let current = Math.max(0, Math.min(slides.length - 1, Number(location.hash.replace('#','')) - 1 || 0));
+      let overviewReturnFocus = null;
+      let notesReturnFocus = null;
+
+      const fitStage = () => {
+        const scale = Math.min(innerWidth / 1440, innerHeight / 810);
+        stage.style.left = `${Math.max(0, (innerWidth - (1440 * scale)) / 2)}px`;
+        stage.style.top = `${Math.max(0, (innerHeight - (810 * scale)) / 2)}px`;
+        stage.style.transform = `scale(${scale})`;
+      };
+
+      const updateNotes = () => {
+        const slide = slides[current];
+        notesTitle.textContent = slide.dataset.title || '';
+        notesCopy.textContent = slide.dataset.notes || '';
+      };
+
+      const show = (index, pushHash = true) => {
+        current = Math.max(0, Math.min(slides.length - 1, index));
+        slides.forEach((slide, i) => {
+          slide.classList.toggle('active', i === current);
+          slide.setAttribute('aria-hidden', i === current ? 'false' : 'true');
+          slide.inert = i !== current;
+        });
+        counter.textContent = `${String(current + 1).padStart(2,'0')} / ${String(slides.length).padStart(2,'0')}`;
+        progress.style.width = `${((current + 1) / slides.length) * 100}%`;
+        progress.setAttribute('aria-valuenow', String(current + 1));
+        progress.setAttribute('aria-valuetext', `Slide ${current + 1} of ${slides.length}`);
+        prevBtn.disabled = current === 0;
+        nextBtn.disabled = current === slides.length - 1;
+        updateNotes();
+        if (pushHash) history.replaceState(null, '', `#${current + 1}`);
+      };
+
+      const next = () => show(current + 1);
+      const prev = () => show(current - 1);
+      nextBtn.addEventListener('click', next);
+      prevBtn.addEventListener('click', prev);
+      fullBtn.addEventListener('click', () => {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+        else document.exitFullscreen?.();
+      });
+      addEventListener('fullscreenchange', () => {
+        const active = Boolean(document.fullscreenElement);
+        fullBtn.setAttribute('aria-pressed', String(active));
+        fullBtn.setAttribute('aria-label', active ? 'Exit fullscreen' : 'Enter fullscreen');
+        fullBtn.title = active ? 'Exit fullscreen (F)' : 'Fullscreen (F)';
+      });
+
+      const setNotesOpen = (open, restoreFocus = true) => {
+        if (open === !notesPanel.hidden) return;
+        if (open) {
+          notesReturnFocus = notesBtn;
+          notesPanel.hidden = false;
+          notesPanel.classList.add('open');
+          notesBtn.setAttribute('aria-expanded', 'true');
+          notesBtn.setAttribute('aria-label', 'Close speaker notes');
+          notesClose.focus({ preventScroll: true });
+          return;
+        }
+        notesPanel.classList.remove('open');
+        notesPanel.hidden = true;
+        notesBtn.setAttribute('aria-expanded', 'false');
+        notesBtn.setAttribute('aria-label', 'Open speaker notes');
+        if (restoreFocus) notesReturnFocus?.focus({ preventScroll: true });
+      };
+
+      const setOverviewOpen = (open, restoreFocus = true) => {
+        if (open === !overview.hidden) return;
+        if (open) {
+          overviewReturnFocus = overviewBtn;
+          setNotesOpen(false, false);
+          overview.hidden = false;
+          overview.classList.add('open');
+          overviewBtn.setAttribute('aria-expanded', 'true');
+          overviewBtn.setAttribute('aria-label', 'Close slide overview');
+          viewport.inert = true;
+          controls.inert = true;
+          overviewClose.focus({ preventScroll: true });
+          return;
+        }
+        overview.classList.remove('open');
+        overview.hidden = true;
+        viewport.inert = false;
+        controls.inert = false;
+        overviewBtn.setAttribute('aria-expanded', 'false');
+        overviewBtn.setAttribute('aria-label', 'Open slide overview');
+        if (restoreFocus) overviewReturnFocus?.focus({ preventScroll: true });
+      };
+
+      slides.forEach((slide, i) => {
+        slide.setAttribute('role', 'group');
+        slide.setAttribute('aria-roledescription', 'slide');
+        slide.setAttribute('aria-label', `${i + 1} of ${slides.length}: ${slide.dataset.title || ''}`);
+        slide.tabIndex = -1;
+        const card = document.createElement('button');
+        card.className = 'overview-card';
+        card.type = 'button';
+        card.innerHTML = `<small>${String(i + 1).padStart(2,'0')}</small><strong>${slide.dataset.title || ''}</strong><span>${slide.dataset.subtitle || ''}</span>`;
+        card.addEventListener('click', () => { show(i); setOverviewOpen(false); });
+        overviewGrid.appendChild(card);
+      });
+      const toggleOverview = () => setOverviewOpen(overview.hidden);
+      const toggleNotes = () => setNotesOpen(notesPanel.hidden);
+      overviewBtn.addEventListener('click', toggleOverview);
+      overviewClose.addEventListener('click', () => setOverviewOpen(false));
+      notesBtn.addEventListener('click', toggleNotes);
+      notesClose.addEventListener('click', () => setNotesOpen(false));
+
+      const trapOverviewFocus = (event) => {
+        const focusable = [...overview.querySelectorAll('button:not([disabled])')];
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      };
+
+      addEventListener('keydown', (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const key = event.key.toLowerCase();
+        if (!overview.hidden) {
+          if (event.key === 'Tab') trapOverviewFocus(event);
+          if (event.key === 'Escape' || key === 'o') { event.preventDefault(); setOverviewOpen(false); }
+          return;
+        }
+        if (event.key === 'Escape' && !notesPanel.hidden) { event.preventDefault(); setNotesOpen(false); return; }
+        if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+        if (event.key === ' ' && target?.matches('button')) return;
+        if (event.key === 'ArrowRight' || event.key === 'PageDown' || event.key === ' ') { event.preventDefault(); next(); }
+        if (event.key === 'ArrowLeft' || event.key === 'PageUp') { event.preventDefault(); prev(); }
+        if (event.key === 'Home') show(0);
+        if (event.key === 'End') show(slides.length - 1);
+        if (key === 'f') fullBtn.click();
+        if (key === 'n') { event.preventDefault(); toggleNotes(); }
+        if (key === 'o') { event.preventDefault(); toggleOverview(); }
+      });
+      addEventListener('resize', fitStage);
+      addEventListener('hashchange', () => show(Number(location.hash.slice(1)) - 1, false));
+      fitStage();
+      show(current, false);
+
+      // Interactive live discovery demo.
+      const demoData = [
+        {
+          time:'30:30', coverage:'1 / 4', claims:'1 source-linked claim', title:'Two-hour resolution target',
+          detail:'Order exceptions should be resolved in under two hours without increasing headcount.', quote:'“...cut order exception resolution from two days to under two hours...”',
+          type:'● Goal', badge:'Heard', qTopic:'Success metric', question:'How is exception resolution time measured today?', rationale:'A trusted baseline is needed to prove the two-hour outcome.', open:'1 open'
+        },
+        {
+          time:'30:46', coverage:'2 / 4', claims:'2 source-linked claims', title:'Inventory reconciliation is batch-only',
+          detail:'Salesforce and NetSuite reconcile inventory through a nightly CSV export.', quote:'“...the two only reconcile through a nightly CSV export.”',
+          type:'● Data flow', badge:'Heard', qTopic:'Failure mode', question:'What happens when the nightly export fails?', rationale:'The handoff is visible; its operating failure is still unknown.', open:'2 open'
+        },
+        {
+          time:'30:58', coverage:'3 / 4', claims:'3 source-linked claims', title:'Agents re-key order IDs',
+          detail:'Support agents copy the same order identifier across Zendesk, Salesforce, and NetSuite.', quote:'“Support agents copy order IDs from Zendesk into both systems.”',
+          type:'● Friction', badge:'Heard', qTopic:'Volume', question:'How many order exceptions and manual handoffs occur per day?', rationale:'Volume determines the upside and proof-of-value capacity target.', open:'3 open'
+        },
+        {
+          time:'31:11', coverage:'4 / 4', claims:'4 source-linked claims', title:'Integration must exclude PII',
+          detail:'Order status and identifiers may cross the boundary; names, emails, and addresses may not.', quote:'“...can pass order status and IDs, but not names, emails, or addresses.”',
+          type:'● Policy', badge:'Needs validation', qTopic:'Guardrail', question:'Which control validates payloads before they leave the EU boundary?', rationale:'A proof of value must inherit or explicitly implement this control.', open:'4 open'
+        }
+      ];
+      let demoStep = 0;
+      let demoTimer = null;
+      const demoStory = document.getElementById('demoStory');
+      const demoListen = document.getElementById('demoListen');
+      const demoStatus = document.getElementById('demoStatus');
+      const setDemo = (step) => {
+        demoStep = Math.max(0, Math.min(demoData.length - 1, step));
+        const d = demoData[demoStep];
+        document.getElementById('demoTime').textContent = d.time;
+        document.getElementById('demoCoverage').textContent = d.coverage;
+        document.getElementById('demoClaims').textContent = d.claims;
+        document.getElementById('demoClaimTitle').textContent = d.title;
+        document.getElementById('demoClaimDetail').textContent = d.detail;
+        document.getElementById('demoQuote').textContent = d.quote;
+        document.getElementById('demoType').textContent = d.type;
+        document.getElementById('demoBadge').textContent = d.badge;
+        document.getElementById('demoQTopic').textContent = d.qTopic;
+        document.getElementById('demoQuestion').textContent = d.question;
+        document.getElementById('demoRationale').textContent = d.rationale;
+        document.getElementById('demoOpen').textContent = d.open;
+        document.querySelectorAll('.demo-slide [data-step]').forEach(el => el.classList.toggle('is-visible', Number(el.dataset.step) <= demoStep));
+        document.querySelectorAll('.demo-node[data-step], .utterance-line[data-step]').forEach((el) => {
+          el.setAttribute('aria-hidden', String(Number(el.dataset.step) > demoStep));
+        });
+        document.querySelectorAll('.demo-node').forEach(el => el.classList.remove('is-active'));
+        const active = document.querySelector(`.demo-node[data-step="${demoStep}"]`);
+        if (active) active.classList.add('is-active');
+        const complete = document.getElementById('demoComplete');
+        const isComplete = demoStep === demoData.length - 1;
+        complete.classList.toggle('show', isComplete);
+        complete.setAttribute('aria-hidden', String(!isComplete));
+        demoStatus.textContent = `Simulation step ${demoStep + 1} of ${demoData.length}. ${d.title}. State: ${d.badge}. Proposed next question: ${d.question}`;
+      };
+      const pauseDemo = () => {
+        clearInterval(demoTimer);
+        demoTimer = null;
+        const complete = demoStep >= demoData.length - 1;
+        demoListen.textContent = complete ? 'Replay' : '▶ Continue';
+        demoListen.setAttribute('aria-label', complete ? 'Replay discovery simulation' : 'Continue discovery simulation');
+        demoListen.classList.remove('running');
+      };
+      const runDemo = () => {
+        demoStory.hidden = true;
+        demoListen.disabled = false;
+        if (demoStep >= demoData.length - 1) setDemo(0);
+        demoListen.textContent = 'Ⅱ Pause';
+        demoListen.setAttribute('aria-label', 'Pause discovery simulation');
+        demoListen.classList.add('running');
+        demoListen.focus({ preventScroll: true });
+        clearInterval(demoTimer);
+        demoTimer = setInterval(() => {
+          if (demoStep < demoData.length - 1) {
+            setDemo(demoStep + 1);
+            if (demoStep === demoData.length - 1) pauseDemo();
+          } else {
+            pauseDemo();
+          }
+        }, 2450);
+      };
+      document.getElementById('demoStart').addEventListener('click', runDemo);
+      demoListen.addEventListener('click', () => demoTimer ? pauseDemo() : runDemo());
+      setDemo(0);
+
+      // Current / proposed future-state simulation.
+      const simCanvas = document.getElementById('simCanvas');
+      const simButtons = [...document.querySelectorAll('[data-sim]')];
+      const setSimulation = (mode) => {
+        const proposed = mode === 'proposed';
+        simCanvas.classList.toggle('proposed', proposed);
+        simButtons.forEach((btn) => {
+          const selected = btn.dataset.sim === mode;
+          btn.classList.toggle('active', selected);
+          btn.setAttribute('aria-pressed', String(selected));
+        });
+        simCanvas.querySelector('.future').setAttribute('aria-hidden', String(!proposed));
+        document.getElementById('simLabel').textContent = proposed ? 'Proposed · needs validation' : 'Evidence-linked current state';
+        document.getElementById('simEyebrow').textContent = proposed ? 'Bounded future-state proposal' : 'Current-state evidence';
+        document.getElementById('simTitle').textContent = proposed ? 'Detect the failure before the customer does.' : 'Batch failures surface through customers.';
+        document.getElementById('simBody').textContent = proposed ? 'A read-only sentinel watches for missing or anomalous exports and alerts operations.' : 'The current model shows a delayed, silent handoff between systems of record.';
+        document.getElementById('simOutcome').textContent = proposed ? 'Earlier intervention' : 'Resolve in < 2h';
+        document.getElementById('simMutation').textContent = proposed ? 'No production writes' : 'None proposed';
+        document.getElementById('simBoundary').textContent = proposed ? '3–5 days · engineering assumption' : 'Observed nightly';
+        document.getElementById('simAssumption').textContent = proposed ? 'Proposal—not fact. The estimate, signal access, PII boundary, and non-mutating design all require named owners and validation before approval.' : 'Current-state connections are evidence-linked. Select “Proposed state” to explore a bounded future.';
+      };
+      simButtons.forEach(button => button.addEventListener('click', () => setSimulation(button.dataset.sim)));
+      setSimulation('current');
+    })();
+  </script>
+</body>
+</html>

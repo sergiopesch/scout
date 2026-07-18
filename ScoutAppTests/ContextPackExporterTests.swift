@@ -9,6 +9,7 @@ final class ContextPackExporterTests: XCTestCase {
         let exporter = ContextPackExporter()
         let workspace = ScoutWorkspace(completed: true)
         workspace.selectPOC("win-monitor")
+        try authenticateSelectedPOCSupport(in: workspace)
         let pack = try exporter.makePack(
             from: workspace,
             approved: true,
@@ -131,6 +132,8 @@ final class ContextPackExporterTests: XCTestCase {
         XCTAssertThrowsError(try exporter.makePack(from: workspace, approved: true))
 
         workspace.selectPOC("win-monitor")
+        XCTAssertFalse(workspace.selectedPOCHasBuildReadyEvidence)
+        try authenticateSelectedPOCSupport(in: workspace)
         XCTAssertTrue(workspace.selectedPOCHasBuildReadyEvidence)
         let pack = try exporter.makePack(
             from: workspace,
@@ -156,6 +159,7 @@ final class ContextPackExporterTests: XCTestCase {
         let exporter = ContextPackExporter()
         let workspace = ScoutWorkspace(completed: true)
         workspace.selectPOC("win-monitor")
+        try authenticateSelectedPOCSupport(in: workspace)
         let selectedClaimIDs = Set(try XCTUnwrap(workspace.selectedPOCQuickWin).supportingClaimIDs)
 
         workspace.entities.append(
@@ -240,6 +244,7 @@ final class ContextPackExporterTests: XCTestCase {
         let exporter = ContextPackExporter()
         let workspace = ScoutWorkspace(completed: true)
         workspace.selectPOC("win-monitor")
+        try authenticateSelectedPOCSupport(in: workspace)
         let staged = try exporter.stageApprovedPack(
             from: workspace,
             currentHead: ContextPackHead(
@@ -270,11 +275,62 @@ final class ContextPackExporterTests: XCTestCase {
         let exporter = ContextPackExporter()
         let workspace = ScoutWorkspace(completed: true)
         workspace.selectPOC("win-monitor")
+        try authenticateSelectedPOCSupport(in: workspace)
 
         XCTAssertThrowsError(
             try exporter.makePack(from: workspace, approved: true, revision: 1)
         ) { error in
             XCTAssertEqual(error as? ContextPackExportError, .missingJournalHead)
+        }
+    }
+
+    func testApprovedHandoffRejectsAcceptedClaimWithoutCanonicalEvidenceIDs() throws {
+        let exporter = ContextPackExporter()
+        let workspace = ScoutWorkspace(completed: true)
+        workspace.selectPOC("win-monitor")
+        try authenticateSelectedPOCSupport(in: workspace)
+        let missingClaimID = try XCTUnwrap(
+            workspace.selectedPOCQuickWin?.supportingClaimIDs.sorted().first
+        )
+        workspace.claimEvidenceIDsByID[missingClaimID] = []
+
+        XCTAssertFalse(workspace.selectedPOCHasBuildReadyEvidence)
+        XCTAssertThrowsError(
+            try exporter.makePack(
+                from: workspace,
+                approved: true,
+                journalHeadSHA256: String(repeating: "a", count: 64)
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ContextPackExportError,
+                .missingCanonicalEvidence([missingClaimID])
+            )
+        }
+    }
+
+    /// Seed and compatibility claims intentionally carry only legacy assurance. Approved-handoff
+    /// tests opt into the authenticated state explicitly, mirroring a canonical replay projection.
+    private func authenticateSelectedPOCSupport(in workspace: ScoutWorkspace) throws {
+        let claimIDs = Set(try XCTUnwrap(workspace.selectedPOCQuickWin).supportingClaimIDs)
+        workspace.claims = workspace.claims.map { claim in
+            guard claimIDs.contains(claim.id) else { return claim }
+            return TrustClaim(
+                id: claim.id,
+                title: claim.title,
+                detail: claim.detail,
+                provenance: claim.provenance,
+                confidence: claim.confidence,
+                evidenceQuote: claim.evidenceQuote,
+                speakerName: claim.speakerName,
+                timestamp: claim.timestamp,
+                relatedEntityID: claim.relatedEntityID,
+                needsValidation: false,
+                reviewStatus: .accepted
+            )
+        }
+        for claimID in claimIDs {
+            workspace.claimEvidenceIDsByID[claimID] = ["evidence-committed-\(claimID)"]
         }
     }
 }

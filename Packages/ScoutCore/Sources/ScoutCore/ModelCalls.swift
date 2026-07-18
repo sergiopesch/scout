@@ -54,6 +54,267 @@ public enum ModelCallReceiptValidationError: Error, Equatable, Sendable {
     case invalidToken(field: String, value: String)
     case tooManyMetadataEntries(Int)
     case invalidMetadataKey(String)
+    case derivedEventManifestTooLarge(Int)
+    case invalidDerivedEventProjectionProgress(consumedCount: UInt16, eventCount: UInt16)
+}
+
+/// One adapter-derived event committed by a model-call receipt manifest.
+///
+/// Entries are not persisted in the receipt. The adapter reduces them into the manifest's rolling
+/// root, and the reducer independently reconstructs that root from the canonical events it applies.
+public struct DerivedEventManifestEntry: Equatable, Sendable, CanonicalRepresentable {
+    public let eventID: EventID
+    public let payloadKind: String
+    public let payloadHash: SHA256Digest
+
+    public init(eventID: EventID, payload: ScoutEventPayload) {
+        self.init(
+            eventID: eventID,
+            payloadKind: payload.kind,
+            payloadHash: .hash(payload.canonicalValue)
+        )
+    }
+
+    public init(eventID: EventID, payloadKind: String, payloadHash: SHA256Digest) {
+        self.eventID = eventID
+        self.payloadKind = payloadKind
+        self.payloadHash = payloadHash
+    }
+
+    public var canonicalValue: CanonicalValue {
+        .object([
+            "eventID": eventID.canonicalValue,
+            "payloadKind": .string(payloadKind),
+            "payloadHash": payloadHash.canonicalValue,
+        ])
+    }
+}
+
+/// Bounded rolling commitment to the exact deterministic events derived from one model response.
+///
+/// The seed binds the receipt identity, provider output, projection base, adapter contract, and
+/// expected count. Every step then binds its zero-based ordinal and the exact canonical event
+/// payload. A receipt stores only the final root, keeping canonical provenance bounded while still
+/// preventing a valid receipt from authorizing an undeclared extra payload.
+public struct DerivedEventManifest: Codable, Equatable, Sendable, CanonicalRepresentable {
+    public static let maximumEventCount = 512
+
+    public let adapterID: NonEmptyString
+    public let adapterVersion: NonEmptyString
+    public let projectionBase: ModelInputEventBoundary
+    public let eventCount: UInt16
+    public let finalRoot: SHA256Digest
+
+    public init(
+        adapterID: NonEmptyString,
+        adapterVersion: NonEmptyString,
+        projectionBase: ModelInputEventBoundary,
+        eventCount: UInt16,
+        finalRoot: SHA256Digest
+    ) throws {
+        guard eventCount <= UInt16(Self.maximumEventCount) else {
+            throw ModelCallReceiptValidationError.derivedEventManifestTooLarge(Int(eventCount))
+        }
+        self.adapterID = adapterID
+        self.adapterVersion = adapterVersion
+        self.projectionBase = projectionBase
+        self.eventCount = eventCount
+        self.finalRoot = finalRoot
+    }
+
+    /// Builds the commitment an adapter must attach to the receipt before any derived event is
+    /// appended. Event order is significant and is retained by the rolling ordinal.
+    public static func committing(
+        adapterID: NonEmptyString,
+        adapterVersion: NonEmptyString,
+        projectionBase: ModelInputEventBoundary,
+        receiptID: ModelCallReceiptID,
+        outputHash: SHA256Digest,
+        entries: [DerivedEventManifestEntry]
+    ) throws -> DerivedEventManifest {
+        guard entries.count <= maximumEventCount else {
+            throw ModelCallReceiptValidationError.derivedEventManifestTooLarge(entries.count)
+        }
+        let count = UInt16(entries.count)
+        var root = seed(
+            receiptID: receiptID,
+            outputHash: outputHash,
+            projectionBase: projectionBase,
+            eventCount: count,
+            adapterID: adapterID,
+            adapterVersion: adapterVersion
+        )
+        for (index, entry) in entries.enumerated() {
+            root = advance(root: root, ordinal: UInt16(index), entry: entry)
+        }
+        return try DerivedEventManifest(
+            adapterID: adapterID,
+            adapterVersion: adapterVersion,
+            projectionBase: projectionBase,
+            eventCount: count,
+            finalRoot: root
+        )
+    }
+
+    public func seed(receiptID: ModelCallReceiptID, outputHash: SHA256Digest) -> SHA256Digest {
+        Self.seed(
+            receiptID: receiptID,
+            outputHash: outputHash,
+            projectionBase: projectionBase,
+            eventCount: eventCount,
+            adapterID: adapterID,
+            adapterVersion: adapterVersion
+        )
+    }
+
+    public static func advance(
+        root: SHA256Digest,
+        ordinal: UInt16,
+        entry: DerivedEventManifestEntry
+    ) -> SHA256Digest {
+        .hash(.object([
+            "domain": .string("scout.derived-event-manifest.entry.v1"),
+            "previousRoot": root.canonicalValue,
+            "ordinal": .unsigned(UInt64(ordinal)),
+            "eventID": entry.eventID.canonicalValue,
+            "payloadKind": .string(entry.payloadKind),
+            "payloadHash": entry.payloadHash.canonicalValue,
+        ]))
+    }
+
+    public var canonicalValue: CanonicalValue {
+        .object([
+            "adapterID": adapterID.canonicalValue,
+            "adapterVersion": adapterVersion.canonicalValue,
+            "projectionBase": projectionBase.canonicalValue,
+            "eventCount": .unsigned(UInt64(eventCount)),
+            "finalRoot": finalRoot.canonicalValue,
+        ])
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case adapterID
+        case adapterVersion
+        case projectionBase
+        case eventCount
+        case finalRoot
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            adapterID: container.decode(NonEmptyString.self, forKey: .adapterID),
+            adapterVersion: container.decode(NonEmptyString.self, forKey: .adapterVersion),
+            projectionBase: container.decode(ModelInputEventBoundary.self, forKey: .projectionBase),
+            eventCount: container.decode(UInt16.self, forKey: .eventCount),
+            finalRoot: container.decode(SHA256Digest.self, forKey: .finalRoot)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(adapterID, forKey: .adapterID)
+        try container.encode(adapterVersion, forKey: .adapterVersion)
+        try container.encode(projectionBase, forKey: .projectionBase)
+        try container.encode(eventCount, forKey: .eventCount)
+        try container.encode(finalRoot, forKey: .finalRoot)
+    }
+
+    private static func seed(
+        receiptID: ModelCallReceiptID,
+        outputHash: SHA256Digest,
+        projectionBase: ModelInputEventBoundary,
+        eventCount: UInt16,
+        adapterID: NonEmptyString,
+        adapterVersion: NonEmptyString
+    ) -> SHA256Digest {
+        .hash(.object([
+            "domain": .string("scout.derived-event-manifest.seed.v1"),
+            "receiptID": receiptID.canonicalValue,
+            "outputHash": outputHash.canonicalValue,
+            "projectionBase": projectionBase.canonicalValue,
+            "eventCount": .unsigned(UInt64(eventCount)),
+            "adapterID": adapterID.canonicalValue,
+            "adapterVersion": adapterVersion.canonicalValue,
+        ]))
+    }
+}
+
+/// Replay-derived progress for one manifest-bearing model response.
+///
+/// Pending and completed values live in separate ScoutState indexes. Keeping the complete rolling
+/// state makes snapshot/replay equivalence explicit and lets a store reject a batch that stops
+/// before the receipt's exact projection is exhausted.
+public struct DerivedEventProjectionProgress: Codable, Equatable, Sendable, CanonicalRepresentable {
+    public let receiptID: ModelCallReceiptID
+    public let modelCallEventID: EventID
+    public let manifest: DerivedEventManifest
+    public let consumedCount: UInt16
+    public let rollingRoot: SHA256Digest
+
+    public init(
+        receiptID: ModelCallReceiptID,
+        modelCallEventID: EventID,
+        manifest: DerivedEventManifest,
+        consumedCount: UInt16,
+        rollingRoot: SHA256Digest
+    ) {
+        self.receiptID = receiptID
+        self.modelCallEventID = modelCallEventID
+        self.manifest = manifest
+        self.consumedCount = consumedCount
+        self.rollingRoot = rollingRoot
+    }
+
+    public var isComplete: Bool {
+        consumedCount == manifest.eventCount && rollingRoot == manifest.finalRoot
+    }
+
+    public var canonicalValue: CanonicalValue {
+        .object([
+            "receiptID": receiptID.canonicalValue,
+            "modelCallEventID": modelCallEventID.canonicalValue,
+            "manifest": manifest.canonicalValue,
+            "consumedCount": .unsigned(UInt64(consumedCount)),
+            "rollingRoot": rollingRoot.canonicalValue,
+        ])
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case receiptID
+        case modelCallEventID
+        case manifest
+        case consumedCount
+        case rollingRoot
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let manifest = try container.decode(DerivedEventManifest.self, forKey: .manifest)
+        let consumedCount = try container.decode(UInt16.self, forKey: .consumedCount)
+        guard consumedCount <= manifest.eventCount else {
+            throw ModelCallReceiptValidationError.invalidDerivedEventProjectionProgress(
+                consumedCount: consumedCount,
+                eventCount: manifest.eventCount
+            )
+        }
+        self.init(
+            receiptID: try container.decode(ModelCallReceiptID.self, forKey: .receiptID),
+            modelCallEventID: try container.decode(EventID.self, forKey: .modelCallEventID),
+            manifest: manifest,
+            consumedCount: consumedCount,
+            rollingRoot: try container.decode(SHA256Digest.self, forKey: .rollingRoot)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(receiptID, forKey: .receiptID)
+        try container.encode(modelCallEventID, forKey: .modelCallEventID)
+        try container.encode(manifest, forKey: .manifest)
+        try container.encode(consumedCount, forKey: .consumedCount)
+        try container.encode(rollingRoot, forKey: .rollingRoot)
+    }
 }
 
 /// Immutable provenance for one provider response.
@@ -71,6 +332,7 @@ public struct ModelCallReceipt: Codable, Equatable, Sendable, CanonicalRepresent
     public let outputSchemaVersion: NonEmptyString
     public let model: NonEmptyString
     public let outputHash: SHA256Digest
+    public let derivedEventManifest: DerivedEventManifest?
     public let metadata: [String: AttributeValue]
 
     public init(
@@ -83,6 +345,7 @@ public struct ModelCallReceipt: Codable, Equatable, Sendable, CanonicalRepresent
         outputSchemaVersion: NonEmptyString,
         model: NonEmptyString,
         outputHash: SHA256Digest,
+        derivedEventManifest: DerivedEventManifest? = nil,
         metadata: [String: AttributeValue] = [:]
     ) throws {
         guard Self.isProvider(provider.rawValue) else {
@@ -102,6 +365,14 @@ public struct ModelCallReceipt: Codable, Equatable, Sendable, CanonicalRepresent
         for key in metadata.keys where !Self.isMetadataKey(key) {
             throw ModelCallReceiptValidationError.invalidMetadataKey(key)
         }
+        if let derivedEventManifest {
+            for (field, value) in [
+                ("derivedEventManifest.adapterID", derivedEventManifest.adapterID.rawValue),
+                ("derivedEventManifest.adapterVersion", derivedEventManifest.adapterVersion.rawValue),
+            ] where !Self.isToken(value) {
+                throw ModelCallReceiptValidationError.invalidToken(field: field, value: value)
+            }
+        }
 
         self.id = id
         self.provider = provider
@@ -112,11 +383,12 @@ public struct ModelCallReceipt: Codable, Equatable, Sendable, CanonicalRepresent
         self.outputSchemaVersion = outputSchemaVersion
         self.model = model
         self.outputHash = outputHash
+        self.derivedEventManifest = derivedEventManifest
         self.metadata = metadata
     }
 
     public var canonicalValue: CanonicalValue {
-        .object([
+        var object: [String: CanonicalValue] = [
             "id": id.canonicalValue,
             "provider": provider.canonicalValue,
             "providerResponseID": providerResponseID.canonicalValue,
@@ -127,7 +399,12 @@ public struct ModelCallReceipt: Codable, Equatable, Sendable, CanonicalRepresent
             "model": model.canonicalValue,
             "outputHash": outputHash.canonicalValue,
             "metadata": .object(metadata.mapValues(\.canonicalValue)),
-        ])
+        ]
+        // Absence must preserve the canonical bytes of schema 1.1-1.3 receipts.
+        if let derivedEventManifest {
+            object["derivedEventManifest"] = derivedEventManifest.canonicalValue
+        }
+        return .object(object)
     }
 
     /// Compares provider-response content while deliberately ignoring Scout's
@@ -141,6 +418,7 @@ public struct ModelCallReceipt: Codable, Equatable, Sendable, CanonicalRepresent
             && outputSchemaVersion == other.outputSchemaVersion
             && model == other.model
             && outputHash == other.outputHash
+            && derivedEventManifest == other.derivedEventManifest
             && metadata == other.metadata
     }
 
@@ -154,6 +432,7 @@ public struct ModelCallReceipt: Codable, Equatable, Sendable, CanonicalRepresent
         case outputSchemaVersion
         case model
         case outputHash
+        case derivedEventManifest
         case metadata
     }
 
@@ -169,6 +448,10 @@ public struct ModelCallReceipt: Codable, Equatable, Sendable, CanonicalRepresent
             outputSchemaVersion: container.decode(NonEmptyString.self, forKey: .outputSchemaVersion),
             model: container.decode(NonEmptyString.self, forKey: .model),
             outputHash: container.decode(SHA256Digest.self, forKey: .outputHash),
+            derivedEventManifest: container.decodeIfPresent(
+                DerivedEventManifest.self,
+                forKey: .derivedEventManifest
+            ),
             metadata: container.decodeIfPresent(
                 [String: AttributeValue].self,
                 forKey: .metadata
@@ -187,6 +470,7 @@ public struct ModelCallReceipt: Codable, Equatable, Sendable, CanonicalRepresent
         try container.encode(outputSchemaVersion, forKey: .outputSchemaVersion)
         try container.encode(model, forKey: .model)
         try container.encode(outputHash, forKey: .outputHash)
+        try container.encodeIfPresent(derivedEventManifest, forKey: .derivedEventManifest)
         try container.encode(metadata, forKey: .metadata)
     }
 

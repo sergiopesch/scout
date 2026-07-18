@@ -238,7 +238,7 @@ final class LiveEventJournalTests: XCTestCase {
         XCTAssertEqual(report.eventCount, 2)
     }
 
-    func testValidatedClaimProjectionCommitsAtomicallyAndRetriesAsNoOp() async throws {
+    func testValidatedClaimProjectionCommitsAtomicallyAndExactRetryIsANoOp() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "scout-journal-projection-\(UUID().uuidString)", directoryHint: .isDirectory)
         let databaseURL = root.appending(path: "Scout.sqlite")
@@ -298,6 +298,35 @@ final class LiveEventJournalTests: XCTestCase {
             sessionID: "session-projection",
             projection: projection
         )
+        let proposedClaimID = try XCTUnwrap(first.canonicalState.claims.keys.first)
+        let claimReview = try await journal.prepareClaimReview(
+            sessionID: "session-projection",
+            claimID: proposedClaimID.rawValue,
+            status: .accepted
+        )
+        guard case let .authorizationRequired(intent) = claimReview,
+              case let .reviewClaim(review) = intent.operation
+        else {
+            return XCTFail("A proposed canonical claim must require exact review authorization")
+        }
+        XCTAssertEqual(review.claimID, proposedClaimID)
+        XCTAssertEqual(review.status, .accepted)
+        XCTAssertEqual(review.trust.origin, .confirmed)
+        XCTAssertEqual(review.trust.validationStatus, .validated)
+        XCTAssertEqual(intent.targetEventID, first.canonicalState.claimEvents[proposedClaimID])
+        XCTAssertEqual(
+            intent.targetStateHash,
+            first.canonicalState.claims[proposedClaimID].map { .hash($0.canonicalValue) }
+        )
+        _ = try await journal.recordFinalUtterance(
+            sessionID: "session-projection",
+            itemID: "item-after-projection",
+            speakerID: speaker.id,
+            text: "A later event must not change the original projection base.",
+            confidenceBasisPoints: 9_400,
+            startMilliseconds: 2_100,
+            endMilliseconds: 3_000
+        )
         let retry = try await journal.recordClaimProjection(
             sessionID: "session-projection",
             projection: projection
@@ -305,9 +334,14 @@ final class LiveEventJournalTests: XCTestCase {
 
         XCTAssertEqual(first.count, 5)
         XCTAssertTrue(retry.isEmpty)
+        XCTAssertEqual(first.canonicalState.lastSequence?.rawValue, 9)
+        XCTAssertEqual(retry.canonicalState.lastSequence?.rawValue, 11)
+        XCTAssertEqual(retry.canonicalState.evidence.count, 2)
+        XCTAssertEqual(retry.canonicalState.completedDerivedEventProjections.count, 1)
+        XCTAssertTrue(retry.canonicalState.pendingDerivedEventProjections.isEmpty)
         let report = try await journal.verify(sessionID: "session-projection")
-        XCTAssertEqual(report.eventCount, 9)
-        XCTAssertEqual(report.lastSequence?.rawValue, 9)
+        XCTAssertEqual(report.eventCount, 11)
+        XCTAssertEqual(report.lastSequence?.rawValue, 11)
 
         let persisted = try SQLiteEventStore(fileURL: databaseURL, encryptionKey: encryptionKey)
         let state = try await persisted.state(for: SessionID(validating: "session-projection"))
@@ -315,6 +349,112 @@ final class LiveEventJournalTests: XCTestCase {
         XCTAssertEqual(state?.graph.entities.count, 2)
         XCTAssertEqual(state?.claims.count, 1)
         XCTAssertEqual(state?.graph.relationships.count, 1)
+    }
+
+    func testRetryWithAlteredAdapterProjectionConflictsWithoutChangingCanonicalState() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "scout-journal-altered-projection-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let databaseURL = root.appending(path: "Scout.sqlite")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let encryptionKey = Data(repeating: 0x57, count: 32)
+        let journal = LiveEventJournal(
+            fileURL: databaseURL,
+            encryptionKeyProvider: { encryptionKey }
+        )
+        let speaker = LiveEventJournal.SpeakerDescriptor(
+            id: "speaker-altered-projection",
+            displayName: "Customer",
+            role: "Architect",
+            affiliation: .customer
+        )
+        try await journal.prepareSession(
+            sessionID: "session-altered-projection",
+            title: "Altered projection retry",
+            speakers: [speaker]
+        )
+        let utterance = try await journal.recordFinalUtterance(
+            sessionID: "session-altered-projection",
+            itemID: "item-altered-1",
+            speakerID: speaker.id,
+            text: "NetSuite stores inventory.",
+            confidenceBasisPoints: 9_500,
+            startMilliseconds: 1_000,
+            endMilliseconds: 2_000
+        )
+        let boundary = Int(utterance.committedEvidenceBoundary.sequence.rawValue)
+        let request = ClaimExtractionRequest(
+            sessionID: "session-altered-projection",
+            eventBoundary: boundary,
+            utterances: [ClaimExtractionUtterance(
+                utteranceID: utterance.utteranceID.rawValue,
+                evidenceID: utterance.evidenceID.rawValue,
+                speakerID: utterance.speakerID.rawValue,
+                text: utterance.text,
+                startMilliseconds: Int(utterance.startMilliseconds),
+                endMilliseconds: Int(utterance.endMilliseconds),
+                source: .realtime
+            )]
+        )
+        let result = try Self.claimResult(
+            utteranceID: utterance.utteranceID.rawValue,
+            boundary: boundary
+        )
+        let projection = try ClaimProposalProjector().project(
+            result,
+            for: request,
+            speakerNamesByID: [speaker.id: speaker.displayName]
+        )
+        let first = try await journal.recordClaimProjection(
+            sessionID: "session-altered-projection",
+            projection: projection
+        )
+        let alteredProjection = ClaimProposalProjection(
+            modelCall: projection.modelCall,
+            entities: projection.entities,
+            relationships: projection.relationships.map { relationship in
+                GraphRelationship(
+                    id: relationship.id,
+                    sourceID: relationship.sourceID,
+                    targetID: relationship.targetID,
+                    label: relationship.label,
+                    confidence: 0.42,
+                    isFriction: relationship.isFriction,
+                    provenance: relationship.provenance,
+                    needsValidation: relationship.needsValidation,
+                    supportingClaimIDs: relationship.supportingClaimIDs,
+                    evidenceIDs: relationship.evidenceIDs
+                )
+            },
+            claims: projection.claims,
+            entityEvidence: projection.entityEvidence,
+            relationshipEvidence: projection.relationshipEvidence,
+            claimProvenance: projection.claimProvenance
+        )
+
+        do {
+            _ = try await journal.recordClaimProjection(
+                sessionID: "session-altered-projection",
+                projection: alteredProjection
+            )
+            XCTFail("Expected a reused provider response with altered adapter output to conflict")
+        } catch let error as ClaimProjectionCommitPlanningError {
+            XCTAssertEqual(
+                error,
+                .conflictingModelResponse(projection.modelCall.responseID)
+            )
+        }
+
+        let persisted = try SQLiteEventStore(fileURL: databaseURL, encryptionKey: encryptionKey)
+        let persistedState = try await persisted.state(
+            for: SessionID(validating: "session-altered-projection")
+        )
+        let state = try XCTUnwrap(persistedState)
+        XCTAssertEqual(state, first.canonicalState)
+        XCTAssertEqual(state.lastSequence?.rawValue, 9)
+        XCTAssertEqual(
+            state.graph.relationships.values.first?.trust.confidence.basisPoints,
+            9_500
+        )
     }
 
     func testLatestReplayStateRebuildsFromEncryptedJournal() async throws {
@@ -457,6 +597,7 @@ final class LiveEventJournalTests: XCTestCase {
         XCTAssertEqual(evidenceRetry, evidence)
         XCTAssertEqual(evidence.committedEvidenceBoundary.sequence.rawValue, 2)
         XCTAssertEqual(evidence.assetSHA256, prepared.assetSHA256)
+        XCTAssertEqual(evidence.mediaType, prepared.mimeType)
 
         let result = try Self.imageObservationResult(assetSHA256: prepared.assetSHA256)
         let observation = try await journal.recordImageObservation(
@@ -471,6 +612,19 @@ final class LiveEventJournalTests: XCTestCase {
         )
         XCTAssertEqual(observationRetry, observation)
         XCTAssertEqual(observation.committedModelBoundary.sequence.rawValue, 3)
+        let proposedObservationID = try XCTUnwrap(observation.observations.first?.id)
+        let visualReview = try await journal.prepareVisualObservationReview(
+            sessionID: "session-image",
+            observationID: proposedObservationID.rawValue,
+            disposition: .confirmed
+        )
+        guard case let .authorizationRequired(intent) = visualReview,
+              case let .reviewVisualObservation(review) = intent.operation
+        else {
+            return XCTFail("A proposed visual observation must require exact review authorization")
+        }
+        XCTAssertEqual(review.observationID, proposedObservationID)
+        XCTAssertEqual(review.disposition, .confirmed)
 
         let persisted = try SQLiteEventStore(fileURL: databaseURL, encryptionKey: encryptionKey)
         let state = try await persisted.state(for: SessionID(validating: "session-image"))
@@ -483,6 +637,19 @@ final class LiveEventJournalTests: XCTestCase {
         XCTAssertEqual(receipt.inputBoundary.sequence, evidence.committedEvidenceBoundary.sequence)
         XCTAssertEqual(receipt.inputBoundary.integrityHash, evidence.committedEvidenceBoundary.integrityHash)
         XCTAssertEqual(receipt.metadata["asset_sha256"], .text(prepared.assetSHA256))
+        XCTAssertEqual(receipt.metadata["byte_count"], .integer(Int64(prepared.byteCount)))
+        XCTAssertEqual(receipt.metadata["pixel_height"], .integer(Int64(prepared.pixelHeight)))
+        XCTAssertEqual(receipt.metadata["pixel_width"], .integer(Int64(prepared.pixelWidth)))
+        let manifest = try XCTUnwrap(receipt.derivedEventManifest)
+        XCTAssertEqual(manifest.adapterID.rawValue, "scout-macos-image-observation")
+        XCTAssertEqual(manifest.adapterVersion.rawValue, "image-observation.v1")
+        XCTAssertEqual(manifest.projectionBase.eventID, evidence.committedEvidenceBoundary.eventID)
+        XCTAssertEqual(manifest.eventCount, 1)
+        let progress = try XCTUnwrap(
+            state?.completedDerivedEventProjections[observation.committedModelBoundary.eventID]
+        )
+        XCTAssertTrue(progress.isComplete)
+        XCTAssertEqual(progress.rollingRoot, manifest.finalRoot)
 
         let report = try await journal.verify(sessionID: "session-image")
         // Session start, image evidence, immutable model receipt, and one proposed observation.
@@ -505,6 +672,144 @@ final class LiveEventJournalTests: XCTestCase {
         )
         let secondReport = try await journal.verify(sessionID: "session-image-two")
         XCTAssertEqual(secondReport.eventCount, 2)
+    }
+
+    func testImageObservationRejectsForgedEvidenceReceiptAndProviderResponseReuse() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "scout-journal-image-binding-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let databaseURL = root.appending(path: "Scout.sqlite")
+        let imageURL = root.appending(path: "whiteboard.png")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try scoutTestImageData(width: 32, height: 20, type: .png).write(to: imageURL)
+
+        let encryptionKey = Data(repeating: 0x62, count: 32)
+        let journal = LiveEventJournal(
+            fileURL: databaseURL,
+            encryptionKeyProvider: { encryptionKey }
+        )
+        try await journal.prepareSession(
+            sessionID: "session-image-binding",
+            title: "Whiteboard evidence binding",
+            speakers: []
+        )
+        let prepared = try ImageEvidenceImporter().prepareUserSelectedImage(at: imageURL)
+        let evidence = try await journal.recordImageEvidence(
+            sessionID: "session-image-binding",
+            image: prepared
+        )
+        let validResult = try Self.imageObservationResult(assetSHA256: prepared.assetSHA256)
+        let differentHash = String(repeating: "d", count: 64)
+        let forgedHashResult = try Self.imageObservationResult(assetSHA256: differentHash)
+        let forgedInputs: [(LiveEventJournal.ImageEvidenceReceipt, ImageObservationResult)] = [
+            (
+                .init(
+                    evidenceID: evidence.evidenceID,
+                    assetID: try AssetID(validating: "asset-forged"),
+                    assetSHA256: evidence.assetSHA256,
+                    mediaType: evidence.mediaType,
+                    pixelWidth: evidence.pixelWidth,
+                    pixelHeight: evidence.pixelHeight,
+                    byteCount: evidence.byteCount,
+                    committedEvidenceBoundary: evidence.committedEvidenceBoundary
+                ),
+                validResult
+            ),
+            (
+                .init(
+                    evidenceID: evidence.evidenceID,
+                    assetID: evidence.assetID,
+                    assetSHA256: differentHash,
+                    mediaType: evidence.mediaType,
+                    pixelWidth: evidence.pixelWidth,
+                    pixelHeight: evidence.pixelHeight,
+                    byteCount: evidence.byteCount,
+                    committedEvidenceBoundary: evidence.committedEvidenceBoundary
+                ),
+                forgedHashResult
+            ),
+            (
+                .init(
+                    evidenceID: evidence.evidenceID,
+                    assetID: evidence.assetID,
+                    assetSHA256: evidence.assetSHA256,
+                    mediaType: "image/png",
+                    pixelWidth: evidence.pixelWidth,
+                    pixelHeight: evidence.pixelHeight,
+                    byteCount: evidence.byteCount,
+                    committedEvidenceBoundary: evidence.committedEvidenceBoundary
+                ),
+                validResult
+            ),
+            (
+                .init(
+                    evidenceID: evidence.evidenceID,
+                    assetID: evidence.assetID,
+                    assetSHA256: evidence.assetSHA256,
+                    mediaType: evidence.mediaType,
+                    pixelWidth: evidence.pixelWidth + 1,
+                    pixelHeight: evidence.pixelHeight,
+                    byteCount: evidence.byteCount,
+                    committedEvidenceBoundary: evidence.committedEvidenceBoundary
+                ),
+                validResult
+            ),
+            (
+                .init(
+                    evidenceID: evidence.evidenceID,
+                    assetID: evidence.assetID,
+                    assetSHA256: evidence.assetSHA256,
+                    mediaType: evidence.mediaType,
+                    pixelWidth: evidence.pixelWidth,
+                    pixelHeight: evidence.pixelHeight,
+                    byteCount: evidence.byteCount + 1,
+                    committedEvidenceBoundary: evidence.committedEvidenceBoundary
+                ),
+                validResult
+            ),
+        ]
+
+        for (forgedEvidence, result) in forgedInputs {
+            do {
+                _ = try await journal.recordImageObservation(
+                    sessionID: "session-image-binding",
+                    evidence: forgedEvidence,
+                    result: result
+                )
+                XCTFail("Expected forged image evidence to be rejected")
+            } catch let error as LiveEventJournal.JournalError {
+                XCTAssertEqual(error, .imageObservationConflict)
+            }
+        }
+
+        _ = try await journal.recordImageObservation(
+            sessionID: "session-image-binding",
+            evidence: evidence,
+            result: validResult
+        )
+        let reusedResponse = try Self.imageObservationResult(
+            assetSHA256: prepared.assetSHA256,
+            outputSHA256: String(repeating: "e", count: 64)
+        )
+        do {
+            _ = try await journal.recordImageObservation(
+                sessionID: "session-image-binding",
+                evidence: evidence,
+                result: reusedResponse
+            )
+            XCTFail("Expected provider response-ID reuse to be rejected")
+        } catch let error as LiveEventJournal.JournalError {
+            XCTAssertEqual(error, .imageObservationConflict)
+        }
+
+        let persisted = try SQLiteEventStore(fileURL: databaseURL, encryptionKey: encryptionKey)
+        let state = try await persisted.state(for: SessionID(validating: "session-image-binding"))
+        XCTAssertEqual(state?.modelCallReceipts.count, 1)
+        XCTAssertEqual(state?.visualObservations.count, 1)
+        let report = try await persisted.verifyChain(
+            for: SessionID(validating: "session-image-binding")
+        )
+        XCTAssertEqual(report.eventCount, 4)
     }
 
     private static func digest(_ value: String) -> String {
@@ -571,7 +876,11 @@ final class LiveEventJournalTests: XCTestCase {
         )
     }
 
-    private static func imageObservationResult(assetSHA256: String) throws -> ImageObservationResult {
+    private static func imageObservationResult(
+        assetSHA256: String,
+        responseID: String = "resp-image-journal",
+        outputSHA256: String = String(repeating: "c", count: 64)
+    ) throws -> ImageObservationResult {
         let data = Data(
             """
             {
@@ -591,12 +900,12 @@ final class LiveEventJournalTests: XCTestCase {
                 "notes": []
               },
               "model_call": {
-                "response_id": "resp-image-journal",
+                "response_id": "\(responseID)",
                 "model": "gpt-test",
                 "prompt_version": "image-observations-v1",
                 "schema_version": "1.0",
                 "input_asset_sha256": "\(assetSHA256)",
-                "output_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                "output_sha256": "\(outputSHA256)"
               }
             }
             """.utf8

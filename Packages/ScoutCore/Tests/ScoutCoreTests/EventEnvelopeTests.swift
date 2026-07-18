@@ -4,6 +4,57 @@ import Testing
 
 @Suite("Versioned event envelopes")
 struct EventEnvelopeTests {
+    @Test("Legacy authorization fields cannot alter state outside the canonical hash")
+    func legacyAuthorizationIsRejected() throws {
+        let schema = EventSchemaVersion(major: 1, minor: 2)
+        let sessionID: SessionID = testID("session-legacy-auth-field")
+        let eventID: EventID = testID("event-legacy-auth-field")
+        let actor = testSystemActor()
+        let payload = ScoutEventPayload.sessionStarted(DiscoverySession(
+            id: sessionID,
+            title: testText("Legacy authorization integrity"),
+            startedAt: timestamp()
+        ))
+        let clean = ScoutEventEnvelope.seal(
+            schemaVersion: schema,
+            id: eventID,
+            sessionID: sessionID,
+            sequence: try EventSequence(1),
+            occurredAt: timestamp(),
+            recordedAt: timestamp(1),
+            actor: actor,
+            payload: payload,
+            previousHash: nil
+        )
+        let injected = ScoutEventEnvelope.seal(
+            schemaVersion: schema,
+            id: eventID,
+            sessionID: sessionID,
+            sequence: try EventSequence(1),
+            occurredAt: timestamp(),
+            recordedAt: timestamp(1),
+            actor: actor,
+            authorization: EventAuthorizationRecord(
+                scope: .localReview,
+                component: testText("not-hash-bound")
+            ),
+            payload: payload,
+            previousHash: nil
+        )
+
+        #expect(clean.integrityHash == injected.integrityHash)
+        #expect(clean.canonicalValue == injected.canonicalValue)
+        #expect(throws: ScoutReducerError.authorizationUnavailableInSchema(
+            eventID: eventID,
+            schemaVersion: schema
+        )) {
+            _ = try ScoutGraphReducer.reducePersisted(
+                ScoutState(sessionID: sessionID),
+                event: injected
+            )
+        }
+    }
+
     @Test("Fixture is a valid, continuous cryptographic chain")
     func fixtureChain() throws {
         let events = try ScoutFixtures.sampleEvents()
@@ -31,6 +82,7 @@ struct EventEnvelopeTests {
             occurredAt: original.occurredAt,
             recordedAt: original.recordedAt,
             actor: original.actor,
+            authorization: original.authorization,
             correlationID: original.correlationID,
             causationID: original.causationID,
             payload: original.payload,
@@ -53,6 +105,7 @@ struct EventEnvelopeTests {
                 millisecondsSinceUnixEpoch: original.recordedAt.millisecondsSinceUnixEpoch + 1
             ),
             actor: original.actor,
+            authorization: original.authorization,
             payload: original.payload,
             previousHash: original.previousHash
         )
@@ -87,7 +140,7 @@ struct EventEnvelopeTests {
 
         #expect(!tampered.hasValidIntegrity)
         do {
-            _ = try ScoutGraphReducer.reduce(
+            _ = try ScoutGraphReducer.reducePersisted(
                 ScoutState(sessionID: tampered.sessionID),
                 event: tampered
             )
@@ -115,11 +168,12 @@ struct EventEnvelopeTests {
                 occurredAt: original.occurredAt,
                 recordedAt: original.recordedAt,
                 actor: original.actor,
+                authorization: original.authorization,
                 payload: original.payload,
                 previousHash: nil
             )
             do {
-                _ = try ScoutGraphReducer.reduce(
+                _ = try ScoutGraphReducer.reducePersisted(
                     ScoutState(sessionID: future.sessionID),
                     event: future
                 )

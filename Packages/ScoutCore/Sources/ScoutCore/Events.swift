@@ -9,8 +9,10 @@ public struct EventSchemaVersion: Codable, Hashable, Comparable, Sendable, Canon
         self.minor = minor
     }
 
-    /// v1.1 adds model receipts; v1.2 adds reviewable visual observations. Older envelopes replay.
-    public static let current = EventSchemaVersion(major: 1, minor: 2)
+    /// v1.1 adds model receipts; v1.2 adds reviewable visual observations; v1.3 records command
+    /// authority; v1.4 commits exact model projections and authenticated local reviews. Older
+    /// envelopes remain replayable under their historical rules.
+    public static let current = EventSchemaVersion(major: 1, minor: 4)
 
     public static func < (lhs: EventSchemaVersion, rhs: EventSchemaVersion) -> Bool {
         (lhs.major, lhs.minor) < (rhs.major, rhs.minor)
@@ -48,6 +50,23 @@ public struct ClaimReviewed: Codable, Equatable, Sendable, CanonicalRepresentabl
             "status": status.canonicalValue,
             "trust": trust.canonicalValue,
         ])
+    }
+}
+
+/// Append-only device-owner attestation of a terminal review recorded by a legacy schema.
+///
+/// The target's exact terminal state and original review event are carried by the authenticated
+/// authorization record. This payload deliberately does not repeat or replace the historical
+/// decision.
+public struct LocalReviewAttested: Codable, Equatable, Sendable, CanonicalRepresentable {
+    public let target: LocalReviewTarget
+
+    public init(target: LocalReviewTarget) {
+        self.target = target
+    }
+
+    public var canonicalValue: CanonicalValue {
+        .object(["target": target.canonicalValue])
     }
 }
 
@@ -96,6 +115,7 @@ public enum ScoutEventPayload: Codable, Equatable, Sendable, CanonicalRepresenta
     case entityRetired(EntityRetired)
     case claimProposed(Claim)
     case claimReviewed(ClaimReviewed)
+    case localReviewAttested(LocalReviewAttested)
     case relationshipUpserted(GraphRelationship)
     case relationshipRemoved(RelationshipRemoved)
 
@@ -113,6 +133,7 @@ public enum ScoutEventPayload: Codable, Equatable, Sendable, CanonicalRepresenta
         case .entityRetired: "entity.retired"
         case .claimProposed: "claim.proposed"
         case .claimReviewed: "claim.reviewed"
+        case .localReviewAttested: "localReview.attested"
         case .relationshipUpserted: "relationship.upserted"
         case .relationshipRemoved: "relationship.removed"
         }
@@ -132,6 +153,7 @@ public enum ScoutEventPayload: Codable, Equatable, Sendable, CanonicalRepresenta
         case let .entityRetired(value): value.canonicalValue
         case let .claimProposed(value): value.canonicalValue
         case let .claimReviewed(value): value.canonicalValue
+        case let .localReviewAttested(value): value.canonicalValue
         case let .relationshipUpserted(value): value.canonicalValue
         case let .relationshipRemoved(value): value.canonicalValue
         }
@@ -175,6 +197,10 @@ public enum ScoutEventPayload: Codable, Equatable, Sendable, CanonicalRepresenta
             self = .claimProposed(try container.decode(Claim.self, forKey: .data))
         case "claim.reviewed":
             self = .claimReviewed(try container.decode(ClaimReviewed.self, forKey: .data))
+        case "localReview.attested":
+            self = .localReviewAttested(
+                try container.decode(LocalReviewAttested.self, forKey: .data)
+            )
         case "relationship.upserted":
             self = .relationshipUpserted(
                 try container.decode(GraphRelationship.self, forKey: .data)
@@ -208,6 +234,7 @@ public enum ScoutEventPayload: Codable, Equatable, Sendable, CanonicalRepresenta
         case let .entityRetired(value): try container.encode(value, forKey: .data)
         case let .claimProposed(value): try container.encode(value, forKey: .data)
         case let .claimReviewed(value): try container.encode(value, forKey: .data)
+        case let .localReviewAttested(value): try container.encode(value, forKey: .data)
         case let .relationshipUpserted(value): try container.encode(value, forKey: .data)
         case let .relationshipRemoved(value): try container.encode(value, forKey: .data)
         }
@@ -223,6 +250,7 @@ public struct ScoutEventEnvelope: Codable, Equatable, Sendable, CanonicalReprese
     public let occurredAt: ScoutTimestamp
     public let recordedAt: ScoutTimestamp
     public let actor: EventActor
+    public let authorization: EventAuthorizationRecord?
     public let correlationID: EventID?
     public let causationID: EventID?
     public let payload: ScoutEventPayload
@@ -237,6 +265,7 @@ public struct ScoutEventEnvelope: Codable, Equatable, Sendable, CanonicalReprese
         occurredAt: ScoutTimestamp,
         recordedAt: ScoutTimestamp,
         actor: EventActor,
+        authorization: EventAuthorizationRecord?,
         correlationID: EventID?,
         causationID: EventID?,
         payload: ScoutEventPayload,
@@ -250,6 +279,7 @@ public struct ScoutEventEnvelope: Codable, Equatable, Sendable, CanonicalReprese
         self.occurredAt = occurredAt
         self.recordedAt = recordedAt
         self.actor = actor
+        self.authorization = authorization
         self.correlationID = correlationID
         self.causationID = causationID
         self.payload = payload
@@ -257,7 +287,7 @@ public struct ScoutEventEnvelope: Codable, Equatable, Sendable, CanonicalReprese
         self.integrityHash = integrityHash
     }
 
-    public static func seal(
+    static func seal(
         schemaVersion: EventSchemaVersion = .current,
         id: EventID,
         sessionID: SessionID,
@@ -265,6 +295,7 @@ public struct ScoutEventEnvelope: Codable, Equatable, Sendable, CanonicalReprese
         occurredAt: ScoutTimestamp,
         recordedAt: ScoutTimestamp,
         actor: EventActor,
+        authorization: EventAuthorizationRecord? = nil,
         correlationID: EventID? = nil,
         causationID: EventID? = nil,
         payload: ScoutEventPayload,
@@ -278,6 +309,7 @@ public struct ScoutEventEnvelope: Codable, Equatable, Sendable, CanonicalReprese
             occurredAt: occurredAt,
             recordedAt: recordedAt,
             actor: actor,
+            authorization: authorization,
             correlationID: correlationID,
             causationID: causationID,
             payload: payload,
@@ -291,6 +323,7 @@ public struct ScoutEventEnvelope: Codable, Equatable, Sendable, CanonicalReprese
             occurredAt: occurredAt,
             recordedAt: recordedAt,
             actor: actor,
+            authorization: authorization,
             correlationID: correlationID,
             causationID: causationID,
             payload: payload,
@@ -312,6 +345,7 @@ public struct ScoutEventEnvelope: Codable, Equatable, Sendable, CanonicalReprese
             occurredAt: occurredAt,
             recordedAt: recordedAt,
             actor: actor,
+            authorization: authorization,
             correlationID: correlationID,
             causationID: causationID,
             payload: payload,
@@ -335,12 +369,13 @@ public struct ScoutEventEnvelope: Codable, Equatable, Sendable, CanonicalReprese
         occurredAt: ScoutTimestamp,
         recordedAt: ScoutTimestamp,
         actor: EventActor,
+        authorization: EventAuthorizationRecord?,
         correlationID: EventID?,
         causationID: EventID?,
         payload: ScoutEventPayload,
         previousHash: SHA256Digest?
     ) -> CanonicalValue {
-        .object([
+        var object: [String: CanonicalValue] = [
             "schemaVersion": schemaVersion.canonicalValue,
             "id": id.canonicalValue,
             "sessionID": sessionID.canonicalValue,
@@ -352,7 +387,11 @@ public struct ScoutEventEnvelope: Codable, Equatable, Sendable, CanonicalReprese
             "causationID": causationID.canonicalValue,
             "payload": payload.canonicalValue,
             "previousHash": previousHash.canonicalValue,
-        ])
+        ]
+        if schemaVersion.major == 1, schemaVersion.minor >= 3 {
+            object["authorization"] = authorization.canonicalValue
+        }
+        return .object(object)
     }
 }
 
@@ -380,12 +419,13 @@ public struct EventChainBuilder: Sendable {
         self.previousHash = previousHash
     }
 
-    public mutating func seal(
+    mutating func seal(
         schemaVersion: EventSchemaVersion = .current,
         id: EventID,
         occurredAt: ScoutTimestamp,
         recordedAt: ScoutTimestamp,
         actor: EventActor,
+        authorization: EventAuthorizationRecord? = nil,
         correlationID: EventID? = nil,
         causationID: EventID? = nil,
         payload: ScoutEventPayload
@@ -398,6 +438,7 @@ public struct EventChainBuilder: Sendable {
             occurredAt: occurredAt,
             recordedAt: recordedAt,
             actor: actor,
+            authorization: authorization,
             correlationID: correlationID,
             causationID: causationID,
             payload: payload,
@@ -406,5 +447,64 @@ public struct EventChainBuilder: Sendable {
         nextSequence = try nextSequence.successor()
         previousHash = envelope.integrityHash
         return envelope
+    }
+
+    /// Resolves one closed semantic command into an appendable event. Actor attribution and commit
+    /// authority are derived from the command and cannot be supplied as an arbitrary pair. New
+    /// writes always use the current schema; older schemas are replay-only compatibility surfaces.
+    public mutating func seal(
+        id: EventID,
+        occurredAt: ScoutTimestamp,
+        recordedAt: ScoutTimestamp,
+        correlationID: EventID? = nil,
+        causationID: EventID? = nil,
+        command: ScoutEventCommand
+    ) throws -> ValidatedScoutEvent {
+        let resolved = command.resolved
+        let envelope = try seal(
+            schemaVersion: .current,
+            id: id,
+            occurredAt: occurredAt,
+            recordedAt: recordedAt,
+            actor: resolved.actor,
+            authorization: resolved.authorization,
+            correlationID: correlationID,
+            causationID: causationID,
+            payload: resolved.payload
+        )
+        return ValidatedScoutEvent(envelope: envelope)
+    }
+
+    /// Seals one device-owner-authenticated review decision.
+    ///
+    /// The event ID, session, target revision, and exact payload are all carried by the opaque
+    /// capability. Callers cannot substitute any of them at this boundary.
+    public mutating func seal(
+        occurredAt: ScoutTimestamp,
+        recordedAt: ScoutTimestamp,
+        authenticatedReview: AuthenticatedLocalReview
+    ) throws -> ValidatedScoutEvent {
+        let intent = authenticatedReview.intent
+        guard intent.sessionID == sessionID else {
+            throw LocalReviewAuthorizationError.sessionMismatch(
+                expected: sessionID,
+                actual: intent.sessionID
+            )
+        }
+        let component = try NonEmptyString(validating: "scout-macos-review-ui")
+        let envelope = try seal(
+            schemaVersion: .current,
+            id: intent.eventID,
+            occurredAt: occurredAt,
+            recordedAt: recordedAt,
+            actor: .system(component: component),
+            authorization: EventAuthorizationRecord(
+                scope: .localReview,
+                component: component,
+                localReviewAuthorization: authenticatedReview.authorization
+            ),
+            payload: intent.operation.payload
+        )
+        return ValidatedScoutEvent(envelope: envelope)
     }
 }

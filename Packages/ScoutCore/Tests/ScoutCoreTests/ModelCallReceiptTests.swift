@@ -97,7 +97,7 @@ struct ModelCallReceiptTests {
         let state = try ScoutGraphReducer.replay(events)
         var chain = try chainContinuing(after: events)
 
-        let missingReceipt = try makeReceipt(
+        let missingReceipt = try manifesting(makeReceipt(
             id: testID("model-call-missing-input"),
             responseID: "resp_missing",
             boundary: ModelInputEventBoundary(
@@ -105,16 +105,19 @@ struct ModelCallReceiptTests {
                 sequence: EventSequence(1),
                 integrityHash: SHA256Digest(validating: String(repeating: "c", count: 64))
             )
-        )
+        ), in: state)
         let missingEvent = try chain.seal(
+            schemaVersion: .current,
             id: testID("event-model-missing-input"),
             occurredAt: timestamp(),
             recordedAt: timestamp(1),
-            actor: testSystemActor(),
+            actor: modelActor(for: missingReceipt),
+            authorization: modelAuthorization(),
+            causationID: missingReceipt.inputBoundary.eventID,
             payload: .modelCallRecorded(missingReceipt)
         )
         #expect(throws: ScoutReducerError.missingModelInputEvent(testID("event-not-applied"))) {
-            _ = try ScoutGraphReducer.reduce(state, event: missingEvent)
+            _ = try ScoutGraphReducer.reducePersisted(state, event: missingEvent)
         }
 
         let applied = events[3]
@@ -123,18 +126,21 @@ struct ModelCallReceiptTests {
             sequence: applied.sequence,
             integrityHash: SHA256Digest(validating: String(repeating: "d", count: 64))
         )
-        let forgedReceipt = try makeReceipt(
+        let forgedReceipt = try manifesting(makeReceipt(
             id: testID("model-call-forged-input"),
             responseID: "resp_forged",
             boundary: forgedBoundary
-        )
+        ), in: state)
         let forgedEvent = ScoutEventEnvelope.seal(
+            schemaVersion: .current,
             id: testID("event-model-forged-input"),
             sessionID: ScoutFixtures.sessionID,
             sequence: missingEvent.sequence,
             occurredAt: timestamp(),
             recordedAt: timestamp(1),
-            actor: testSystemActor(),
+            actor: modelActor(for: forgedReceipt),
+            authorization: modelAuthorization(),
+            causationID: forgedReceipt.inputBoundary.eventID,
             payload: .modelCallRecorded(forgedReceipt),
             previousHash: missingEvent.previousHash
         )
@@ -142,7 +148,7 @@ struct ModelCallReceiptTests {
             expected: ModelInputEventBoundary(applied),
             actual: forgedBoundary
         )) {
-            _ = try ScoutGraphReducer.reduce(state, event: forgedEvent)
+            _ = try ScoutGraphReducer.reducePersisted(state, event: forgedEvent)
         }
     }
 
@@ -154,14 +160,17 @@ struct ModelCallReceiptTests {
         var chain = try chainContinuing(after: events)
 
         let duplicateEvent = try chain.seal(
+            schemaVersion: .current,
             id: testID("event-model-duplicate-id"),
             occurredAt: timestamp(),
             recordedAt: timestamp(1),
-            actor: testSystemActor(),
+            actor: modelActor(for: original),
+            authorization: modelAuthorization(),
+            causationID: original.inputBoundary.eventID,
             payload: .modelCallRecorded(original)
         )
         #expect(throws: ScoutReducerError.duplicateModelCallReceipt(original.id)) {
-            _ = try ScoutGraphReducer.reduce(state, event: duplicateEvent)
+            _ = try ScoutGraphReducer.reducePersisted(state, event: duplicateEvent)
         }
 
         let conflicting = try replacing(
@@ -169,17 +178,20 @@ struct ModelCallReceiptTests {
             outputHash: SHA256Digest.hash(Data("different-output".utf8))
         )
         let conflictEvent = ScoutEventEnvelope.seal(
+            schemaVersion: .current,
             id: testID("event-model-conflicting-id"),
             sessionID: ScoutFixtures.sessionID,
             sequence: duplicateEvent.sequence,
             occurredAt: timestamp(),
             recordedAt: timestamp(1),
-            actor: testSystemActor(),
+            actor: modelActor(for: conflicting),
+            authorization: modelAuthorization(),
+            causationID: conflicting.inputBoundary.eventID,
             payload: .modelCallRecorded(conflicting),
             previousHash: duplicateEvent.previousHash
         )
         #expect(throws: ScoutReducerError.modelCallReceiptConflict(original.id)) {
-            _ = try ScoutGraphReducer.reduce(state, event: conflictEvent)
+            _ = try ScoutGraphReducer.reducePersisted(state, event: conflictEvent)
         }
     }
 
@@ -192,17 +204,20 @@ struct ModelCallReceiptTests {
 
         let duplicate = try replacing(original, id: testID("model-call-duplicate-response"))
         let duplicateEvent = try chain.seal(
+            schemaVersion: .current,
             id: testID("event-model-duplicate-response"),
             occurredAt: timestamp(),
             recordedAt: timestamp(1),
-            actor: testSystemActor(),
+            actor: modelActor(for: duplicate),
+            authorization: modelAuthorization(),
+            causationID: duplicate.inputBoundary.eventID,
             payload: .modelCallRecorded(duplicate)
         )
         #expect(throws: ScoutReducerError.duplicateModelResponse(
             provider: original.provider.rawValue,
             responseID: original.providerResponseID.rawValue
         )) {
-            _ = try ScoutGraphReducer.reduce(state, event: duplicateEvent)
+            _ = try ScoutGraphReducer.reducePersisted(state, event: duplicateEvent)
         }
 
         let conflict = try replacing(
@@ -211,12 +226,15 @@ struct ModelCallReceiptTests {
             outputHash: SHA256Digest.hash(Data("conflicting-provider-output".utf8))
         )
         let conflictEvent = ScoutEventEnvelope.seal(
+            schemaVersion: .current,
             id: testID("event-model-conflicting-response"),
             sessionID: ScoutFixtures.sessionID,
             sequence: duplicateEvent.sequence,
             occurredAt: timestamp(),
             recordedAt: timestamp(1),
-            actor: testSystemActor(),
+            actor: modelActor(for: conflict),
+            authorization: modelAuthorization(),
+            causationID: conflict.inputBoundary.eventID,
             payload: .modelCallRecorded(conflict),
             previousHash: duplicateEvent.previousHash
         )
@@ -224,7 +242,7 @@ struct ModelCallReceiptTests {
             provider: original.provider.rawValue,
             responseID: original.providerResponseID.rawValue
         )) {
-            _ = try ScoutGraphReducer.reduce(state, event: conflictEvent)
+            _ = try ScoutGraphReducer.reducePersisted(state, event: conflictEvent)
         }
     }
 
@@ -246,7 +264,7 @@ struct ModelCallReceiptTests {
             )),
             previousHash: nil
         )
-        let state = try ScoutGraphReducer.reduce(ScoutState(sessionID: sessionID), event: started)
+        let state = try ScoutGraphReducer.reducePersisted(ScoutState(sessionID: sessionID), event: started)
         #expect(state.session?.status == .active)
 
         let receipt = try makeReceipt(
@@ -269,7 +287,7 @@ struct ModelCallReceiptTests {
             kind: "modelCall.recorded",
             schemaVersion: EventSchemaVersion(major: 1, minor: 0)
         )) {
-            _ = try ScoutGraphReducer.reduce(state, event: receiptEvent)
+            _ = try ScoutGraphReducer.reducePersisted(state, event: receiptEvent)
         }
     }
 
@@ -279,12 +297,20 @@ struct ModelCallReceiptTests {
         var object = try #require(
             JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as? [String: Any]
         )
+        object.removeValue(forKey: "evidenceEvents")
         object.removeValue(forKey: "modelCallReceipts")
+        object.removeValue(forKey: "modelCallEvents")
+        object.removeValue(forKey: "removedRelationships")
+        object.removeValue(forKey: "lastSchemaVersion")
         object.removeValue(forKey: "eventBoundaries")
         let legacyData = try JSONSerialization.data(withJSONObject: object)
         let decoded = try JSONDecoder().decode(ScoutState.self, from: legacyData)
 
+        #expect(decoded.evidenceEvents.isEmpty)
         #expect(decoded.modelCallReceipts.isEmpty)
+        #expect(decoded.modelCallEvents.isEmpty)
+        #expect(decoded.removedRelationships.isEmpty)
+        #expect(decoded.lastSchemaVersion == nil)
         #expect(decoded.eventBoundaries.isEmpty)
         #expect(decoded.sessionID == state.sessionID)
         #expect(decoded.graph == state.graph)
@@ -332,7 +358,52 @@ struct ModelCallReceiptTests {
             outputSchemaVersion: receipt.outputSchemaVersion,
             model: receipt.model,
             outputHash: outputHash ?? receipt.outputHash,
+            derivedEventManifest: receipt.derivedEventManifest,
             metadata: receipt.metadata
+        )
+    }
+
+    private func manifesting(
+        _ receipt: ModelCallReceipt,
+        in state: ScoutState
+    ) throws -> ModelCallReceipt {
+        let baseID = try #require(state.lastEventID)
+        let base = try #require(state.eventBoundaries[baseID])
+        let manifest = try DerivedEventManifest.committing(
+            adapterID: testText("receipt-unit-test"),
+            adapterVersion: testText("v1"),
+            projectionBase: base,
+            receiptID: receipt.id,
+            outputHash: receipt.outputHash,
+            entries: []
+        )
+        return try ModelCallReceipt(
+            id: receipt.id,
+            provider: receipt.provider,
+            providerResponseID: receipt.providerResponseID,
+            purpose: receipt.purpose,
+            inputBoundary: receipt.inputBoundary,
+            promptVersion: receipt.promptVersion,
+            outputSchemaVersion: receipt.outputSchemaVersion,
+            model: receipt.model,
+            outputHash: receipt.outputHash,
+            derivedEventManifest: manifest,
+            metadata: receipt.metadata
+        )
+    }
+
+    private func modelActor(for receipt: ModelCallReceipt) -> EventActor {
+        .model(ModelIdentity(
+            provider: receipt.provider,
+            model: receipt.model,
+            operationVersion: receipt.promptVersion
+        ))
+    }
+
+    private func modelAuthorization() -> EventAuthorizationRecord {
+        EventAuthorizationRecord(
+            scope: .modelProjection,
+            component: testText("receipt-unit-test-validator")
         )
     }
 }

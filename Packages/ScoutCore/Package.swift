@@ -10,10 +10,20 @@ let package = Package(
     ],
     products: [
         .library(name: "ScoutCore", targets: ["ScoutCore"]),
+        .library(name: "ScoutLocalReviewAuthority", targets: ["ScoutLocalReviewAuthority"]),
     ],
     targets: [
         .target(name: "ScoutCore"),
+        .target(
+            name: "ScoutLocalReviewAuthority",
+            dependencies: ["ScoutCore"],
+            linkerSettings: [.linkedFramework("LocalAuthentication")]
+        ),
         .testTarget(name: "ScoutCoreTests", dependencies: ["ScoutCore"]),
+        .testTarget(
+            name: "ScoutLocalReviewAuthorityTests",
+            dependencies: ["ScoutCore", "ScoutLocalReviewAuthority"]
+        ),
     ],
     swiftLanguageModes: [.v6]
 )

@@ -3,6 +3,13 @@ import Foundation
 import XCTest
 
 final class RealtimeTranscriptionClientTests: XCTestCase {
+    func testProductionTranscriptionModelUsesSupportedCurrentModel() {
+        XCTAssertEqual(
+            RealtimeTranscriptionClient.productionTranscriptionModel,
+            "gpt-4o-mini-transcribe"
+        )
+    }
+
     func testCaptureAccumulatorPreservesExactFrameSpanAndPCMDuration() throws {
         var accumulator = RealtimeAudioCaptureAccumulator()
 

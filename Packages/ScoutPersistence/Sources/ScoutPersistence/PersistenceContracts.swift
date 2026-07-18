@@ -89,14 +89,14 @@ public struct ChainVerificationReport: Equatable, Sendable {
 /// core store; reads additionally throw because persisted bytes can be corrupt.
 public protocol ScoutPersistentEventStore: Sendable {
     @discardableResult
-    func append(_ event: ScoutEventEnvelope) async throws -> AppendReceipt
+    func append(_ event: ValidatedScoutEvent) async throws -> AppendReceipt
 
     @discardableResult
-    func append(_ events: [ScoutEventEnvelope]) async throws -> [AppendReceipt]
+    func append(_ events: [ValidatedScoutEvent]) async throws -> [AppendReceipt]
 
     @discardableResult
     func append(
-        _ events: [ScoutEventEnvelope],
+        _ events: [ValidatedScoutEvent],
         expecting version: ExpectedStreamVersion,
         idempotencyKey: IdempotencyKey?
     ) async throws -> [AppendReceipt]

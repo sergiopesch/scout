@@ -55,6 +55,7 @@ enum AudioCaptureMode: String, CaseIterable, Identifiable {
 }
 
 enum SessionStatus: String, Hashable {
+    case draft
     case live
     case ready
     case archived
@@ -102,6 +103,20 @@ enum EvidenceKind: String, CaseIterable, Hashable, Sendable {
     }
 }
 
+enum TranscriptCommitState: String, Hashable, Sendable {
+    case pending
+    case committed
+    case uncommitted
+
+    var accessibilityLabel: String {
+        switch self {
+        case .pending: "Evidence commit pending"
+        case .committed: "Committed to the evidence journal"
+        case .uncommitted: "Not committed to the evidence journal"
+        }
+    }
+}
+
 struct TranscriptUtterance: Identifiable, Hashable {
     let id: String
     let speaker: Speaker
@@ -110,6 +125,30 @@ struct TranscriptUtterance: Identifiable, Hashable {
     let provenance: EvidenceKind
     let confidence: Double
     let isFinal: Bool
+    var commitState: TranscriptCommitState
+    let commitOperationID: String?
+
+    init(
+        id: String,
+        speaker: Speaker,
+        secondsFromStart: Int,
+        text: String,
+        provenance: EvidenceKind,
+        confidence: Double,
+        isFinal: Bool,
+        commitState: TranscriptCommitState = .committed,
+        commitOperationID: String? = nil
+    ) {
+        self.id = id
+        self.speaker = speaker
+        self.secondsFromStart = secondsFromStart
+        self.text = text
+        self.provenance = provenance
+        self.confidence = confidence
+        self.isFinal = isFinal
+        self.commitState = commitState
+        self.commitOperationID = commitOperationID
+    }
 
     var timestamp: String {
         let minutes = secondsFromStart / 60
@@ -154,12 +193,16 @@ enum VisualEvidenceReviewStatus: String, Hashable, Sendable {
     case proposed
     case confirmed
     case rejected
+    case legacyConfirmed
+    case legacyRejected
 
     var label: String {
         switch self {
         case .proposed: "Needs validation"
         case .confirmed: "Confirmed"
         case .rejected: "Rejected"
+        case .legacyConfirmed: "Legacy confirmation — unattested"
+        case .legacyRejected: "Legacy rejection — unattested"
         }
     }
 }
@@ -203,7 +246,12 @@ struct VisualEvidenceProposalCard: Identifiable, Hashable, Sendable {
         self.reviewStatus = reviewStatus
     }
 
-    var needsValidation: Bool { reviewStatus == .proposed }
+    var needsValidation: Bool {
+        switch reviewStatus {
+        case .proposed, .legacyConfirmed, .legacyRejected: true
+        case .confirmed, .rejected: false
+        }
+    }
 }
 
 enum GraphEntityKind: String, CaseIterable, Hashable, Sendable {
@@ -278,6 +326,23 @@ struct GraphRelationship: Identifiable, Hashable, Sendable {
     }
 }
 
+enum ClaimReviewStatus: String, Hashable, Sendable {
+    case proposed
+    case accepted
+    case legacyAccepted
+}
+
+enum ClaimReviewDecision: String, Hashable, Sendable {
+    case accept
+    case reject
+    case reattestAcceptance
+}
+
+struct ClaimReviewErrorState: Equatable, Sendable {
+    let claimID: String
+    let message: String
+}
+
 struct TrustClaim: Identifiable, Hashable, Sendable {
     let id: String
     let title: String
@@ -288,7 +353,51 @@ struct TrustClaim: Identifiable, Hashable, Sendable {
     let speakerName: String
     let timestamp: String
     let relatedEntityID: String?
-    let needsValidation: Bool
+    let reviewStatus: ClaimReviewStatus
+
+    var needsValidation: Bool { reviewStatus != .accepted }
+
+    init(
+        id: String,
+        title: String,
+        detail: String,
+        provenance: EvidenceKind,
+        confidence: Double,
+        evidenceQuote: String,
+        speakerName: String,
+        timestamp: String,
+        relatedEntityID: String?,
+        needsValidation: Bool,
+        reviewStatus: ClaimReviewStatus? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.detail = detail
+        self.provenance = provenance
+        self.confidence = confidence
+        self.evidenceQuote = evidenceQuote
+        self.speakerName = speakerName
+        self.timestamp = timestamp
+        self.relatedEntityID = relatedEntityID
+        self.reviewStatus = reviewStatus ?? Self.defaultReviewStatus(
+            provenance: provenance,
+            needsValidation: needsValidation
+        )
+    }
+
+    private static func defaultReviewStatus(
+        provenance: EvidenceKind,
+        needsValidation: Bool
+    ) -> ClaimReviewStatus {
+        guard !needsValidation else { return .proposed }
+        return switch provenance {
+        // Compatibility and demo values have no canonical review attestation. Preserve their
+        // historical decision without claiming device-owner authentication; only the canonical
+        // state projector may opt into `.accepted` after replaying an authenticated review.
+        case .heard, .validated: .legacyAccepted
+        case .inferred, .proposed: .proposed
+        }
+    }
 }
 
 enum QuestionPriority: String, Hashable {
@@ -362,6 +471,7 @@ final class ScoutWorkspace {
     var destination: WorkspaceDestination = .discovery
     var captureState: CaptureState = .paused
     var selectedEntityID: String?
+    var selectedClaimID: String?
     var transcript: [TranscriptUtterance] = []
     var entities: [GraphEntity] = []
     var relationships: [GraphRelationship] = []
@@ -379,6 +489,8 @@ final class ScoutWorkspace {
     var visualEvidenceMessage: String?
     var visualEvidenceReviewError: String?
     var reviewingVisualObservationIDs: Set<String> = []
+    var claimReviewError: ClaimReviewErrorState?
+    var reviewingClaimIDs: Set<String> = []
     var elapsedSeconds = 1_842
     var demoStep = 0
     var liveError: String?
@@ -386,6 +498,7 @@ final class ScoutWorkspace {
     var systemAudioSources: [SystemAudioCaptureSource] = []
     var selectedSystemAudioSourceID: String?
     var isRefreshingAudioSources = false
+    var isCaptureTransitioning = false
 
     var sessions: [SessionSummary]
 
@@ -394,11 +507,15 @@ final class ScoutWorkspace {
     @ObservationIgnored
     var liveCaptureToggle: (() -> Void)?
     @ObservationIgnored
+    var liveCaptureStopRequest: (() -> Void)?
+    @ObservationIgnored
     var systemAudioRefresh: (() -> Void)?
     @ObservationIgnored
     var visualEvidenceImport: (() -> Void)?
     @ObservationIgnored
     var visualEvidenceReview: ((String, VisualEvidenceReviewStatus) -> Void)?
+    @ObservationIgnored
+    var claimReview: ((String, ClaimReviewDecision) -> Void)?
     @ObservationIgnored
     private var hasStartedLiveSession = false
 
@@ -480,16 +597,41 @@ final class ScoutWorkspace {
         selectedSessionID == sessions[0].id
     }
 
+    /// Seeded Northstar content is a fictional product tour, never a customer record.
+    var isDemoWorkspace: Bool {
+        selectedSessionID == Self.demoSession.id
+    }
+
     var selectedEntity: GraphEntity? {
         entities.first(where: { $0.id == selectedEntityID })
     }
 
     var selectedClaim: TrustClaim? {
+        if let selectedClaimID,
+           let match = claims.first(where: { $0.id == selectedClaimID }),
+           selectedEntityID == nil || match.relatedEntityID == selectedEntityID {
+            return match
+        }
         if let selectedEntityID,
            let match = claims.last(where: { $0.relatedEntityID == selectedEntityID }) {
             return match
         }
         return claims.last
+    }
+
+    /// Resolves only evidence identifiers rebuilt from canonical replay. Quotes, model-proposal
+    /// provenance, and synthetic compatibility identifiers are intentionally not substitutes.
+    func canonicalEvidenceIDs(forClaimID claimID: String) -> [String] {
+        let normalized = claimEvidenceIDsByID[claimID, default: []].compactMap { evidenceID in
+            let trimmed = evidenceID.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return Array(Set(normalized)).sorted()
+    }
+
+    var selectedClaimCanonicalEvidenceIDs: [String] {
+        guard let selectedClaim else { return [] }
+        return canonicalEvidenceIDs(forClaimID: selectedClaim.id)
     }
 
     var selectedPOCQuickWin: QuickWin? {
@@ -506,8 +648,12 @@ final class ScoutWorkspace {
         let claimsByID = Dictionary(uniqueKeysWithValues: claims.map { ($0.id, $0) })
         return selectedPOCQuickWin.supportingClaimIDs.allSatisfy { id in
             guard let claim = claimsByID[id] else { return false }
-            return !claim.needsValidation
+            return claim.reviewStatus == .accepted
+                && !claim.needsValidation
                 && (claim.provenance == .heard || claim.provenance == .validated)
+                && claimEvidenceIDsByID[id]?.contains(where: {
+                    !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }) == true
         }
     }
 
@@ -519,7 +665,14 @@ final class ScoutWorkspace {
 
     var evidenceCoverage: Double {
         guard !entities.isEmpty else { return 0 }
-        let grounded = entities.filter { $0.provenance == .heard || $0.provenance == .validated }.count
+        let grounded = entities.filter { entity in
+            guard entity.provenance == .heard || entity.provenance == .validated else {
+                return false
+            }
+            return projectionEvidenceByID[entity.id]?.evidenceIDs.contains(where: {
+                !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }) == true
+        }.count
         return Double(grounded) / Double(entities.count)
     }
 
@@ -564,6 +717,18 @@ final class ScoutWorkspace {
         }
     }
 
+    /// Requests an authoritative stop before presenting an archived session. Demo playback is
+    /// owned locally, but the coordinator owns every live lifecycle phase, including startup that
+    /// has not yet published `.listening`. It also owns the final `captureState` update after stop
+    /// and transcript drain complete.
+    func requestCaptureStopForArchiveNavigation() {
+        if simulationTask != nil {
+            pauseDemo()
+            return
+        }
+        liveCaptureStopRequest?()
+    }
+
     func toggleCapture() {
         if simulationTask != nil {
             pauseDemo()
@@ -600,19 +765,60 @@ final class ScoutWorkspace {
 
     func replayDemo() {
         pauseDemo()
-        sessions[0] = Self.demoSession
+        sessions.removeAll { $0.id == Self.demoSession.id }
+        sessions.insert(Self.demoSession, at: 0)
         selectedSessionID = Self.demoSession.id
         loadSeed()
         startDemoIfNeeded()
     }
 
+    /// Creates a real, empty draft and keeps the selected UI identity aligned with the canonical
+    /// evidence session. Passing an identifier makes this transition deterministic in tests and in
+    /// future session-index replay; production callers receive a fresh immutable identifier.
+    func beginNewDiscoverySession(
+        id: String = "session-\(UUID().uuidString.lowercased())",
+        organization: String = "Untitled customer",
+        title: String = "New discovery session"
+    ) {
+        guard captureState != .listening, !isCaptureTransitioning, !id.isEmpty else { return }
+        pauseDemo()
+        installNewDraft(id: id, organization: organization, title: title)
+    }
+
     /// Moves from the static, explicitly replayable product tour into a clean live session.
     /// Pausing and resuming the same session preserves everything already captured.
     func beginLiveSessionIfNeeded() {
-        pauseDemo()
         guard !hasStartedLiveSession else { return }
+        pauseDemo()
+        installNewDraft(
+            id: "session-\(UUID().uuidString.lowercased())",
+            organization: "Untitled customer",
+            title: "New discovery session"
+        )
+    }
+
+    private func installNewDraft(id: String, organization: String, title: String) {
+        let draft = SessionSummary(
+            id: id,
+            organization: organization,
+            title: title,
+            relativeDate: "Draft",
+            duration: "0 min",
+            participantCount: 0,
+            status: .draft,
+            summary: "No customer evidence captured yet"
+        )
+        sessions.removeAll { $0.id == id }
+        sessions.insert(draft, at: 0)
+        selectedSessionID = id
+        activeEvidenceSessionID = id
+        resetForNewSession()
+    }
+
+    private func resetForNewSession() {
         hasStartedLiveSession = true
-        activeEvidenceSessionID = "session-\(UUID().uuidString.lowercased())"
+        demoStep = Self.totalDemoSteps
+        captureState = .idle
         elapsedSeconds = 0
         transcript = []
         entities = []
@@ -624,28 +830,67 @@ final class ScoutWorkspace {
         projectionEvidenceByID = [:]
         claimProvenanceByID = [:]
         claimEvidenceIDsByID = [:]
+        resetClaimReviewState()
         selectedPOCQuickWinID = nil
         resetVisualEvidence()
         selectedEntityID = nil
+        selectedClaimID = nil
         liveError = nil
     }
 
-    /// Applies a validated, deterministic projection. Stable content identifiers make retries
-    /// idempotent while replacement allows later evidence to strengthen an existing item.
-    func apply(_ projection: ClaimProposalProjection) {
-        Self.upsert(projection.entities, into: &entities)
-        Self.upsert(projection.relationships, into: &relationships)
-        Self.upsert(projection.claims, into: &claims)
-
-        for link in projection.entityEvidence + projection.relationshipEvidence {
-            projectionEvidenceByID[link.projectionID] = link
+    /// Replaces the disposable graph with a projection rebuilt from canonical replay. This is
+    /// intentionally not an upsert: claims or relationships filtered by deterministic commit
+    /// policy must disappear instead of surviving from an earlier/raw adapter projection.
+    func applyCanonicalClaimProjection(_ projection: WorkspaceReplayProjection) {
+        entities = projection.entities
+        relationships = projection.relationships
+        claims = projection.claims
+        projectionEvidenceByID = projection.projectionEvidenceByID
+        claimProvenanceByID = [:]
+        claimEvidenceIDsByID = projection.claimEvidenceIDsByID
+        let reviewableClaimIDs = Set(projection.claims.compactMap { claim in
+            claim.reviewStatus == .accepted ? nil : claim.id
+        })
+        reviewingClaimIDs.formIntersection(reviewableClaimIDs)
+        if let claimReviewError,
+           !reviewableClaimIDs.contains(claimReviewError.claimID) {
+            self.claimReviewError = nil
         }
-        for provenance in projection.claimProvenance {
-            claimProvenanceByID[provenance.projectedClaimID] = provenance
-            claimEvidenceIDsByID[provenance.projectedClaimID] = provenance.evidenceIDs
-        }
-        if selectedEntityID == nil {
+        if let selectedEntityID,
+           projection.entities.contains(where: { $0.id == selectedEntityID }) {
+            self.selectedEntityID = selectedEntityID
+        } else {
             selectedEntityID = projection.entities.first?.id
+        }
+        if let selectedClaimID,
+           projection.claims.contains(where: {
+               $0.id == selectedClaimID
+                   && (selectedEntityID == nil || $0.relatedEntityID == selectedEntityID)
+           }) {
+            self.selectedClaimID = selectedClaimID
+        } else if let selectedEntityID {
+            selectedClaimID = projection.claims.last(where: {
+                $0.relatedEntityID == selectedEntityID
+            })?.id
+        } else {
+            selectedClaimID = projection.claims.last?.id
+        }
+    }
+
+    /// Replaces only the disposable visual-evidence projection from canonical replay after a
+    /// review or re-attestation commits. Capture and unrelated workspace interaction stay live.
+    func applyCanonicalVisualEvidenceProjection(_ projection: WorkspaceReplayProjection) {
+        visualEvidenceAsset = projection.visualEvidenceAsset
+        visualEvidenceProposals = projection.visualEvidenceProposals
+        visualEvidencePhase = projection.visualEvidenceAsset == nil ? .idle : .ready
+        reviewingVisualObservationIDs.formIntersection(
+            Set(projection.visualEvidenceProposals.filter(\.needsValidation).map(\.id))
+        )
+        visualEvidenceReviewError = nil
+        if projection.visualEvidenceAsset == nil {
+            visualEvidenceMessage = nil
+        } else {
+            refreshVisualEvidenceReviewSummary()
         }
     }
 
@@ -693,7 +938,7 @@ final class ScoutWorkspace {
         evidence: LiveEventJournal.ImageEvidenceReceipt,
         observation: LiveEventJournal.ImageObservationReceipt
     ) {
-        let cards = observation.observations.map(VisualObservationUIProjector.card)
+        let cards = observation.observations.map { VisualObservationUIProjector.card($0) }
 
         visualEvidenceAsset = VisualEvidenceAssetSummary(
             evidenceID: evidence.evidenceID.rawValue,
@@ -720,6 +965,40 @@ final class ScoutWorkspace {
 
     func rejectVisualObservation(_ id: String) {
         reviewVisualObservation(id, disposition: .rejected)
+    }
+
+    func acceptClaim(_ id: String) {
+        requestClaimReview(id, decision: .accept)
+    }
+
+    func rejectClaim(_ id: String) {
+        requestClaimReview(id, decision: .reject)
+    }
+
+    func reattestClaimAcceptance(_ id: String) {
+        requestClaimReview(id, decision: .reattestAcceptance)
+    }
+
+    func setClaimReviewInProgress(_ id: String, _ inProgress: Bool) {
+        if !inProgress {
+            reviewingClaimIDs.remove(id)
+            return
+        }
+        guard let claim = claims.first(where: { $0.id == id }),
+              claim.reviewStatus != .accepted
+        else { return }
+        reviewingClaimIDs.insert(id)
+        if claimReviewError?.claimID == id {
+            claimReviewError = nil
+        }
+    }
+
+    func failClaimReview(_ id: String, message: String) {
+        reviewingClaimIDs.remove(id)
+        claimReviewError = ClaimReviewErrorState(
+            claimID: id,
+            message: "Review not saved. \(message)"
+        )
     }
 
     func setVisualObservationReviewInProgress(_ id: String, _ inProgress: Bool) {
@@ -757,18 +1036,63 @@ final class ScoutWorkspace {
         _ id: String,
         disposition: VisualEvidenceReviewStatus
     ) {
-        guard disposition != .proposed,
-              visualEvidenceProposals.first(where: { $0.id == id })?.reviewStatus == .proposed,
+        guard disposition == .confirmed || disposition == .rejected,
+              let current = visualEvidenceProposals.first(where: { $0.id == id })?.reviewStatus,
+              Self.isAllowedVisualReview(disposition, for: current),
               !reviewingVisualObservationIDs.contains(id)
         else { return }
         visualEvidenceReview?(id, disposition)
     }
 
+    private static func isAllowedVisualReview(
+        _ disposition: VisualEvidenceReviewStatus,
+        for status: VisualEvidenceReviewStatus
+    ) -> Bool {
+        switch (status, disposition) {
+        case (.proposed, .confirmed), (.proposed, .rejected),
+             (.legacyConfirmed, .confirmed), (.legacyRejected, .rejected):
+            true
+        default:
+            false
+        }
+    }
+
+    private func requestClaimReview(
+        _ id: String,
+        decision: ClaimReviewDecision
+    ) {
+        guard let claim = claims.first(where: { $0.id == id }),
+              !reviewingClaimIDs.contains(id),
+              isAllowed(decision, for: claim.reviewStatus),
+              let claimReview
+        else { return }
+        if claimReviewError?.claimID == id {
+            claimReviewError = nil
+        }
+        claimReview(id, decision)
+    }
+
+    private func isAllowed(
+        _ decision: ClaimReviewDecision,
+        for status: ClaimReviewStatus
+    ) -> Bool {
+        switch (status, decision) {
+        case (.proposed, .accept), (.proposed, .reject),
+             (.legacyAccepted, .reattestAcceptance):
+            true
+        default:
+            false
+        }
+    }
+
     private func refreshVisualEvidenceReviewSummary() {
         let confirmed = visualEvidenceProposals.filter { $0.reviewStatus == .confirmed }.count
         let rejected = visualEvidenceProposals.filter { $0.reviewStatus == .rejected }.count
-        let proposed = visualEvidenceProposals.count - confirmed - rejected
-        visualEvidenceMessage = "\(confirmed) confirmed · \(rejected) rejected · \(proposed) awaiting review. Confirmed observations remain evidence only."
+        let unattested = visualEvidenceProposals.filter {
+            $0.reviewStatus == .legacyConfirmed || $0.reviewStatus == .legacyRejected
+        }.count
+        let proposed = visualEvidenceProposals.count - confirmed - rejected - unattested
+        visualEvidenceMessage = "\(confirmed) confirmed · \(rejected) rejected · \(proposed) awaiting review · \(unattested) legacy unattested. Confirmed observations remain evidence only."
     }
 
     func failVisualEvidenceImport(_ message: String, evidenceRetained: Bool) {
@@ -784,6 +1108,13 @@ final class ScoutWorkspace {
 
     func selectEntity(_ id: String) {
         selectedEntityID = id
+        selectedClaimID = claims.last(where: { $0.relatedEntityID == id })?.id
+    }
+
+    func selectClaim(_ id: String) {
+        guard let claim = claims.first(where: { $0.id == id }) else { return }
+        selectedClaimID = claim.id
+        selectedEntityID = claim.relatedEntityID
     }
 
     func markQuestionAsked(_ id: String) {
@@ -828,6 +1159,9 @@ final class ScoutWorkspace {
         claimEvidenceIDsByID = projection.claimEvidenceIDsByID
         selectedPOCQuickWinID = nil
         selectedEntityID = projection.entities.first?.id
+        selectedClaimID = selectedEntityID.flatMap { selectedEntityID in
+            projection.claims.last(where: { $0.relatedEntityID == selectedEntityID })?.id
+        } ?? projection.claims.last?.id
         questions = []
         artifacts = Self.draftingArtifacts
         visualEvidenceAsset = projection.visualEvidenceAsset
@@ -835,6 +1169,7 @@ final class ScoutWorkspace {
         visualEvidencePhase = projection.visualEvidenceAsset == nil ? .idle : .ready
         visualEvidenceReviewError = nil
         reviewingVisualObservationIDs = []
+        resetClaimReviewState()
         if projection.visualEvidenceAsset == nil {
             visualEvidenceMessage = nil
         } else {
@@ -853,6 +1188,7 @@ final class ScoutWorkspace {
         elapsedSeconds = 1_842
         liveError = nil
         resetVisualEvidence()
+        resetClaimReviewState()
         claimEvidenceIDsByID = [:]
         selectedPOCQuickWinID = nil
         transcript = [
@@ -938,6 +1274,7 @@ final class ScoutWorkspace {
         quickWins = []
         artifacts = Self.draftingArtifacts
         selectedEntityID = "goal-resolution"
+        selectedClaimID = "claim-resolution"
     }
 
     private func resetVisualEvidence() {
@@ -947,6 +1284,11 @@ final class ScoutWorkspace {
         visualEvidenceMessage = nil
         visualEvidenceReviewError = nil
         reviewingVisualObservationIDs = []
+    }
+
+    private func resetClaimReviewState() {
+        claimReviewError = nil
+        reviewingClaimIDs = []
     }
 
     private static func upsert<Value: Identifiable>(_ additions: [Value], into values: inout [Value])
@@ -1018,6 +1360,7 @@ final class ScoutWorkspace {
                 TrustClaim(id: "claim-nightly", title: "Inventory reconciliation is batch-only", detail: "Salesforce and NetSuite reconcile inventory through a nightly CSV export.", provenance: .heard, confidence: 0.97, evidenceQuote: "…the two only reconcile through a nightly CSV export.", speakerName: raj.name, timestamp: "30:46", relatedEntityID: "data-csv", needsValidation: false)
             )
             selectedEntityID = "data-csv"
+            selectedClaimID = "claim-nightly"
 
         case 1:
             transcript.append(
@@ -1046,6 +1389,7 @@ final class ScoutWorkspace {
                 DiscoveryQuestion(id: "question-volume", priority: .critical, topic: "Volume", text: "How many order exceptions and manual handoffs occur per day?", rationale: "Volume determines the automation upside and POC capacity target.", isAsked: false)
             )
             selectedEntityID = "friction-rekey"
+            selectedClaimID = "claim-rekey"
 
         case 2:
             transcript.append(
@@ -1072,6 +1416,7 @@ final class ScoutWorkspace {
                 DiscoveryQuestion(id: "question-controls", priority: .high, topic: "Guardrail", text: "Which existing control validates payloads before they leave the EU boundary?", rationale: "A POC must inherit or explicitly implement this control.", isAsked: false)
             )
             selectedEntityID = "policy-eu"
+            selectedClaimID = "claim-eu"
 
         case 3:
             transcript.append(
@@ -1098,6 +1443,7 @@ final class ScoutWorkspace {
                 QuickWin(id: "win-status", title: "Exception status assistant", detail: "Give support a grounded, PII-safe order-status view across the three systems.", impact: 5, effort: 2, readiness: 4, timeToValue: "2–3 weeks", evidenceCount: 6, supportingClaimIDs: ["claim-rekey", "claim-eu", "claim-resolution"])
             )
             selectedEntityID = "goal-conversion"
+            selectedClaimID = "claim-conversion"
 
         case 4:
             transcript.append(
@@ -1121,6 +1467,7 @@ final class ScoutWorkspace {
                 DiscoveryQuestion(id: "question-owner", priority: .explore, topic: "Ownership", text: "Who owns the inventory feed and the incident response today?", rationale: "A named operator is required for alert routing and POC acceptance.", isAsked: false)
             )
             selectedEntityID = "data-csv"
+            selectedClaimID = "claim-failure"
 
         default:
             transcript.append(
@@ -1148,6 +1495,7 @@ final class ScoutWorkspace {
                 ActionArtifact(id: $0.id, title: $0.title, detail: $0.detail, symbol: $0.symbol, readiness: $0.id == "artifact-codex" ? .review : .ready)
             }
             selectedEntityID = "action-poc"
+            selectedClaimID = "claim-poc"
         }
 
         demoStep += 1

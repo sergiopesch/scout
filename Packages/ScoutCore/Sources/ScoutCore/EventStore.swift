@@ -30,13 +30,23 @@ public actor InMemoryEventStore {
     public init() {}
 
     @discardableResult
-    public func append(_ event: ScoutEventEnvelope) throws -> AppendReceipt {
+    public func append(_ event: ValidatedScoutEvent) throws -> AppendReceipt {
         try append([event])[0]
     }
 
     @discardableResult
-    public func append(_ events: [ScoutEventEnvelope]) throws -> [AppendReceipt] {
-        guard !events.isEmpty else { return [] }
+    public func append(_ validatedEvents: [ValidatedScoutEvent]) throws -> [AppendReceipt] {
+        guard !validatedEvents.isEmpty else { return [] }
+        let events = validatedEvents.map(\.envelope)
+        let appendTime = Self.timestamp()
+
+        for event in validatedEvents {
+            do {
+                try event.validateAppendAuthorization(at: appendTime)
+            } catch let error as ScoutEventAuthorizationError {
+                throw EventStoreError.reduction(.authorization(error))
+            }
+        }
 
         var candidateStreams = streams
         var candidateStates = states
@@ -50,13 +60,25 @@ public actor InMemoryEventStore {
             }
             let current = candidateStates[event.sessionID] ?? ScoutState(sessionID: event.sessionID)
             do {
-                let next = try ScoutGraphReducer.reduce(current, event: event)
+                let next = try ScoutGraphReducer.reduce(
+                    current,
+                    event: validatedEvents[receipts.count]
+                )
                 candidateStates[event.sessionID] = next
             } catch let error as ScoutReducerError {
                 throw EventStoreError.reduction(error)
             }
             candidateStreams[event.sessionID, default: []].append(event)
             receipts.append(AppendReceipt(event: event))
+        }
+
+        for sessionID in Set(events.map(\.sessionID)).sorted() {
+            guard let candidate = candidateStates[sessionID] else { continue }
+            do {
+                try ScoutGraphReducer.validateBatchTerminal(candidate)
+            } catch let error as ScoutReducerError {
+                throw EventStoreError.reduction(error)
+            }
         }
 
         streams = candidateStreams
@@ -84,5 +106,11 @@ public actor InMemoryEventStore {
 
     public func sessionIDs() -> [SessionID] {
         streams.keys.sorted()
+    }
+
+    private static func timestamp() -> ScoutTimestamp {
+        ScoutTimestamp(millisecondsSinceUnixEpoch: Int64(
+            (Date().timeIntervalSince1970 * 1_000).rounded(.down)
+        ))
     }
 }

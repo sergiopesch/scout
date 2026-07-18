@@ -7,7 +7,7 @@ Scout uses five separate secret classes:
 | Secret | Lifetime | Holder | Purpose |
 | --- | --- | --- | --- |
 | OpenAI API key | persistent, revocable | Keychain and Gateway process | Provider authorization |
-| Approval HMAC keyring | persistent, rotatable | Keychain, Gateway, read-only MCP verifier | Authenticate approved context packs |
+| Approval HMAC keyring | persistent, rotatable | Keychain, Gateway, explicitly configured MCP process | Authenticate approved context packs |
 | Gateway bearer | one launch | launcher, Gateway, Scout UI | Authorize native REST/WebSocket traffic |
 | Approval token | one launch | launcher, Gateway, Scout UI | Separate operator-approval capability |
 | Event-store encryption key | device-local persistent | app Keychain and persistence cipher | Encrypt append-only journal bodies |
@@ -16,11 +16,19 @@ The app process never receives the OpenAI key or approval HMAC keyring. It recei
 Gateway and approval tokens. No secret is serialized into an event, context pack, log, SBOM, release
 manifest, or Codex prompt.
 
+The bundled MCP process does not query Keychain or invoke a launcher secret-export command. Because the
+current approval format uses symmetric HMAC, an MCP process can verify approved packs only when an
+operator explicitly supplies the matching keyring in its environment. That process then holds signing-
+capable material even though its tools are read-only. The default archive starts without the key and
+fails approved reads closed. Replacing HMAC with asymmetric signatures is required before a standalone
+installed plugin can be both automatically operational and genuinely verify-only.
+
 ## Storage
 
 The native launcher stores Gateway secrets as non-synchronizing generic-password items with
 `AfterFirstUnlockThisDeviceOnly` accessibility. The OpenAI key and JSON approval keyring use distinct
-accounts. A keyring contains one active signer and up to 31 retained verification keys.
+accounts. A keyring contains one active signer and up to 31 retained compatibility keys. The software
+uses retained keys only for verification, but HMAC does not make that restriction cryptographic.
 
 The sandboxed UI separately owns the event-store encryption key. It is device-bound, non-synchronizing,
 and currently has no export, backup, or rotation path. Loss of that Keychain item makes the encrypted
@@ -38,22 +46,24 @@ cp .env.example .env.local
 make configure-secrets
 ```
 
-Legacy `SCOUT_APPROVAL_HMAC_KEY` and `SCOUT_APPROVAL_KEY_ID` values are preserved if present. The
+Legacy `SCOUT_APPROVAL_HMAC_KEY` and `SCOUT_APPROVAL_KEY_ID` values are preserved if present. Device-
+owner authentication is required before the developer helper imports or exports any secret. The
 migration sends secret JSON only over a child-process stdin pipe and removes all recognized secret
 lines from `.env.local` after Keychain confirms the import. If Keychain import fails, the command leaves
 `.env.local` untouched; fix Keychain access, rerun migration, then verify that secret lines are absent.
 
 ## Packaged provisioning
 
-After an ad-hoc or signed package is assembled locally:
+After an ad-hoc validation package is assembled locally:
 
 ```sh
 make provision-package
 ```
 
-The script reads the development secret contract from the development launcher and sends it over stdin
-to the packaged executable. It verifies only non-secret status fields. It never prints or writes the
-secret values.
+The script requests device-owner authentication for the development read and ad-hoc import, captures
+the development secret contract over a child-process pipe, and sends it over stdin to the ad-hoc
+executable. It verifies only non-secret status fields. It never prints or writes the secret values.
+Developer ID launchers do not compile plaintext secret export or import commands.
 
 For a distributed release installed in `/Applications`, configure the provider key through the same
 signed launcher binary without placing it in argv, shell history, or a file:
@@ -62,9 +72,10 @@ signed launcher binary without placing it in argv, shell history, or a file:
 /Applications/Scout.app/Contents/MacOS/Scout secrets configure-openai
 ```
 
-The command requires an interactive terminal and hides input. It also creates the first approval key
-when the release namespace is empty. Do not ship a pre-provisioned Keychain, `.env.local`, or
-environment export.
+The command requires an interactive terminal, a fresh device-owner authentication, and hidden input. It
+also creates the first approval key when the release namespace is empty. Rotation and revocation
+commands require the same local authentication. Do not ship a pre-provisioned Keychain, `.env.local`,
+or environment export.
 
 ## Approval rotation
 
@@ -72,12 +83,14 @@ environment export.
 make rotate-approval-key
 ```
 
-Development rotation generates a new random active key and key ID, retains prior keys as verify-only,
-and never rewrites approved packs. New packs use the new key; old packs remain readable because verification
-selects the key named in their immutable approval binding.
+Development rotation generates a new random active key and key ID, retains prior keys as inactive
+compatibility entries, and never rewrites approved packs. New packs use the new key; old packs remain
+readable because verification selects the key named in their immutable approval binding. Any process
+that receives a retained HMAC secret could still construct signatures, which is why asymmetric
+replacement is a release requirement.
 
 The keyring holds at most 32 keys total. Rotation fails closed at that limit; inventory, reapprove or
-expire affected packs, then retire a verify-only key before trying again.
+expire affected packs, then retire a retained key before trying again.
 
 To rotate the installed release namespace, invoke its signed executable:
 
@@ -100,7 +113,7 @@ Before retiring an old verification key:
 5. Stop Scout and every Scout MCP process again after reapproval so no verifier retains the old
    startup keyring.
 6. Run the usage command again and verify no retained pack references the old key ID.
-7. Revoke the verify-only key with an explicit invalidation acknowledgement:
+7. Revoke the retained key with an explicit invalidation acknowledgement:
 
    ```sh
    /Applications/Scout.app/Contents/MacOS/Scout \

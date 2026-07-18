@@ -6,11 +6,27 @@ public struct ScoutState: Codable, Equatable, Sendable, CanonicalRepresentable {
     public internal(set) var speakers: [SpeakerID: Speaker]
     public internal(set) var utterances: [UtteranceID: Utterance]
     public internal(set) var evidence: [EvidenceID: Evidence]
+    public internal(set) var evidenceEvents: [EvidenceID: EventID]
     public internal(set) var modelCallReceipts: [ModelCallReceiptID: ModelCallReceipt]
+    public internal(set) var modelCallEvents: [EventID: ModelCallReceiptID]
+    public internal(set) var pendingDerivedEventProjections: [EventID: DerivedEventProjectionProgress]
+    public internal(set) var completedDerivedEventProjections: [EventID: DerivedEventProjectionProgress]
     public internal(set) var visualObservations: [VisualObservationID: VisualObservation]
+    public internal(set) var visualObservationEvents: [VisualObservationID: EventID]
+    public internal(set) var visualObservationReviewEvents: [VisualObservationID: EventID]
+    public internal(set) var visualObservationReviewAttestations: [
+        VisualObservationID: LocalReviewAttestation
+    ]
     public internal(set) var claims: [ClaimID: Claim]
+    public internal(set) var claimEvents: [ClaimID: EventID]
+    public internal(set) var claimReviewEvents: [ClaimID: EventID]
+    public internal(set) var claimReviewAttestations: [ClaimID: LocalReviewAttestation]
+    public internal(set) var consumedReviewAuthorizationIDs: Set<ReviewAuthorizationID>
     public internal(set) var graph: CustomerGraph
+    public internal(set) var removedRelationships: [RelationshipID: RelationshipRemoved]
+    public internal(set) var lastSchemaVersion: EventSchemaVersion?
     public internal(set) var lastSequence: EventSequence?
+    public internal(set) var lastEventID: EventID?
     public internal(set) var lastEventHash: SHA256Digest?
     public internal(set) var appliedEventIDs: Set<EventID>
     public internal(set) var eventBoundaries: [EventID: ModelInputEventBoundary]
@@ -21,11 +37,25 @@ public struct ScoutState: Codable, Equatable, Sendable, CanonicalRepresentable {
         speakers = [:]
         utterances = [:]
         evidence = [:]
+        evidenceEvents = [:]
         modelCallReceipts = [:]
+        modelCallEvents = [:]
+        pendingDerivedEventProjections = [:]
+        completedDerivedEventProjections = [:]
         visualObservations = [:]
+        visualObservationEvents = [:]
+        visualObservationReviewEvents = [:]
+        visualObservationReviewAttestations = [:]
         claims = [:]
+        claimEvents = [:]
+        claimReviewEvents = [:]
+        claimReviewAttestations = [:]
+        consumedReviewAuthorizationIDs = []
         graph = CustomerGraph()
+        removedRelationships = [:]
+        lastSchemaVersion = nil
         lastSequence = nil
+        lastEventID = nil
         lastEventHash = nil
         appliedEventIDs = []
         eventBoundaries = [:]
@@ -40,15 +70,103 @@ public struct ScoutState: Codable, Equatable, Sendable, CanonicalRepresentable {
                 utterances.values.sorted { $0.id < $1.id }.map(\.canonicalValue)
             ),
             "evidence": .array(evidence.values.sorted { $0.id < $1.id }.map(\.canonicalValue)),
+            "evidenceEvents": .array(
+                evidenceEvents.sorted { $0.key < $1.key }.map { evidenceID, eventID in
+                    .object([
+                        "evidenceID": evidenceID.canonicalValue,
+                        "eventID": eventID.canonicalValue,
+                    ])
+                }
+            ),
             "modelCallReceipts": .array(
                 modelCallReceipts.values.sorted { $0.id < $1.id }.map(\.canonicalValue)
+            ),
+            "modelCallEvents": .array(
+                modelCallEvents.sorted { $0.key < $1.key }.map { eventID, receiptID in
+                    .object([
+                        "eventID": eventID.canonicalValue,
+                        "receiptID": receiptID.canonicalValue,
+                    ])
+                }
+            ),
+            "pendingDerivedEventProjections": .array(
+                pendingDerivedEventProjections.values
+                    .sorted { $0.modelCallEventID < $1.modelCallEventID }
+                    .map(\.canonicalValue)
+            ),
+            "completedDerivedEventProjections": .array(
+                completedDerivedEventProjections.values
+                    .sorted { $0.modelCallEventID < $1.modelCallEventID }
+                    .map(\.canonicalValue)
             ),
             "visualObservations": .array(
                 visualObservations.values.sorted { $0.id < $1.id }.map(\.canonicalValue)
             ),
+            "visualObservationEvents": .array(
+                visualObservationEvents.sorted { $0.key < $1.key }.map { id, eventID in
+                    .object([
+                        "visualObservationID": id.canonicalValue,
+                        "eventID": eventID.canonicalValue,
+                    ])
+                }
+            ),
+            "visualObservationReviewEvents": .array(
+                visualObservationReviewEvents.sorted { $0.key < $1.key }.map { id, eventID in
+                    .object([
+                        "visualObservationID": id.canonicalValue,
+                        "eventID": eventID.canonicalValue,
+                    ])
+                }
+            ),
+            "visualObservationReviewAttestations": .array(
+                visualObservationReviewAttestations.sorted { $0.key < $1.key }.map {
+                    id, attestation in
+                    .object([
+                        "visualObservationID": id.canonicalValue,
+                        "attestation": attestation.canonicalValue,
+                    ])
+                }
+            ),
             "claims": .array(claims.values.sorted { $0.id < $1.id }.map(\.canonicalValue)),
+            "claimEvents": .array(
+                claimEvents.sorted { $0.key < $1.key }.map { id, eventID in
+                    .object([
+                        "claimID": id.canonicalValue,
+                        "eventID": eventID.canonicalValue,
+                    ])
+                }
+            ),
+            "claimReviewEvents": .array(
+                claimReviewEvents.sorted { $0.key < $1.key }.map { id, eventID in
+                    .object([
+                        "claimID": id.canonicalValue,
+                        "eventID": eventID.canonicalValue,
+                    ])
+                }
+            ),
+            "claimReviewAttestations": .array(
+                claimReviewAttestations.sorted { $0.key < $1.key }.map { id, attestation in
+                    .object([
+                        "claimID": id.canonicalValue,
+                        "attestation": attestation.canonicalValue,
+                    ])
+                }
+            ),
+            "consumedReviewAuthorizationIDs": .array(
+                consumedReviewAuthorizationIDs.sorted().map(\.canonicalValue)
+            ),
             "graph": graph.canonicalValue,
+            "removedRelationships": .array(
+                removedRelationships.sorted { $0.key < $1.key }.map { id, removal in
+                    .object([
+                        "relationshipID": id.canonicalValue,
+                        "removal": removal.canonicalValue,
+                    ])
+                }
+            ),
+            "lastSchemaVersion": lastSchemaVersion.canonicalValue,
             "lastSequence": lastSequence.canonicalValue,
+            "lastEventID": lastEventID.canonicalValue,
             "lastEventHash": lastEventHash.canonicalValue,
             "appliedEventIDs": .array(appliedEventIDs.sorted().map(\.canonicalValue)),
             "eventBoundaries": .array(
@@ -67,18 +185,32 @@ public struct ScoutState: Codable, Equatable, Sendable, CanonicalRepresentable {
         case speakers
         case utterances
         case evidence
+        case evidenceEvents
         case modelCallReceipts
+        case modelCallEvents
+        case pendingDerivedEventProjections
+        case completedDerivedEventProjections
         case visualObservations
+        case visualObservationEvents
+        case visualObservationReviewEvents
+        case visualObservationReviewAttestations
         case claims
+        case claimEvents
+        case claimReviewEvents
+        case claimReviewAttestations
+        case consumedReviewAuthorizationIDs
         case graph
+        case removedRelationships
+        case lastSchemaVersion
         case lastSequence
+        case lastEventID
         case lastEventHash
         case appliedEventIDs
         case eventBoundaries
     }
 
-    /// v1.0 state snapshots decode with empty receipt and boundary projections.
-    /// Replaying the canonical event log repopulates the boundary index.
+    /// Legacy snapshots decode with empty replay-derived indexes and tombstones. They are readable for
+    /// compatibility, but a schema 1.4 writer must rebuild them from the complete canonical event log.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         sessionID = try container.decode(SessionID.self, forKey: .sessionID)
@@ -86,17 +218,70 @@ public struct ScoutState: Codable, Equatable, Sendable, CanonicalRepresentable {
         speakers = try container.decode([SpeakerID: Speaker].self, forKey: .speakers)
         utterances = try container.decode([UtteranceID: Utterance].self, forKey: .utterances)
         evidence = try container.decode([EvidenceID: Evidence].self, forKey: .evidence)
+        evidenceEvents = try container.decodeIfPresent(
+            [EvidenceID: EventID].self,
+            forKey: .evidenceEvents
+        ) ?? [:]
         modelCallReceipts = try container.decodeIfPresent(
             [ModelCallReceiptID: ModelCallReceipt].self,
             forKey: .modelCallReceipts
+        ) ?? [:]
+        modelCallEvents = try container.decodeIfPresent(
+            [EventID: ModelCallReceiptID].self,
+            forKey: .modelCallEvents
+        ) ?? [:]
+        pendingDerivedEventProjections = try container.decodeIfPresent(
+            [EventID: DerivedEventProjectionProgress].self,
+            forKey: .pendingDerivedEventProjections
+        ) ?? [:]
+        completedDerivedEventProjections = try container.decodeIfPresent(
+            [EventID: DerivedEventProjectionProgress].self,
+            forKey: .completedDerivedEventProjections
         ) ?? [:]
         visualObservations = try container.decodeIfPresent(
             [VisualObservationID: VisualObservation].self,
             forKey: .visualObservations
         ) ?? [:]
+        visualObservationEvents = try container.decodeIfPresent(
+            [VisualObservationID: EventID].self,
+            forKey: .visualObservationEvents
+        ) ?? [:]
+        visualObservationReviewEvents = try container.decodeIfPresent(
+            [VisualObservationID: EventID].self,
+            forKey: .visualObservationReviewEvents
+        ) ?? [:]
+        visualObservationReviewAttestations = try container.decodeIfPresent(
+            [VisualObservationID: LocalReviewAttestation].self,
+            forKey: .visualObservationReviewAttestations
+        ) ?? [:]
         claims = try container.decode([ClaimID: Claim].self, forKey: .claims)
+        claimEvents = try container.decodeIfPresent(
+            [ClaimID: EventID].self,
+            forKey: .claimEvents
+        ) ?? [:]
+        claimReviewEvents = try container.decodeIfPresent(
+            [ClaimID: EventID].self,
+            forKey: .claimReviewEvents
+        ) ?? [:]
+        claimReviewAttestations = try container.decodeIfPresent(
+            [ClaimID: LocalReviewAttestation].self,
+            forKey: .claimReviewAttestations
+        ) ?? [:]
+        consumedReviewAuthorizationIDs = try container.decodeIfPresent(
+            Set<ReviewAuthorizationID>.self,
+            forKey: .consumedReviewAuthorizationIDs
+        ) ?? []
         graph = try container.decode(CustomerGraph.self, forKey: .graph)
+        removedRelationships = try container.decodeIfPresent(
+            [RelationshipID: RelationshipRemoved].self,
+            forKey: .removedRelationships
+        ) ?? [:]
+        lastSchemaVersion = try container.decodeIfPresent(
+            EventSchemaVersion.self,
+            forKey: .lastSchemaVersion
+        )
         lastSequence = try container.decodeIfPresent(EventSequence.self, forKey: .lastSequence)
+        lastEventID = try container.decodeIfPresent(EventID.self, forKey: .lastEventID)
         lastEventHash = try container.decodeIfPresent(SHA256Digest.self, forKey: .lastEventHash)
         appliedEventIDs = try container.decode(Set<EventID>.self, forKey: .appliedEventIDs)
         eventBoundaries = try container.decodeIfPresent(
@@ -112,11 +297,40 @@ public struct ScoutState: Codable, Equatable, Sendable, CanonicalRepresentable {
         try container.encode(speakers, forKey: .speakers)
         try container.encode(utterances, forKey: .utterances)
         try container.encode(evidence, forKey: .evidence)
+        try container.encode(evidenceEvents, forKey: .evidenceEvents)
         try container.encode(modelCallReceipts, forKey: .modelCallReceipts)
+        try container.encode(modelCallEvents, forKey: .modelCallEvents)
+        try container.encode(
+            pendingDerivedEventProjections,
+            forKey: .pendingDerivedEventProjections
+        )
+        try container.encode(
+            completedDerivedEventProjections,
+            forKey: .completedDerivedEventProjections
+        )
         try container.encode(visualObservations, forKey: .visualObservations)
+        try container.encode(visualObservationEvents, forKey: .visualObservationEvents)
+        try container.encode(
+            visualObservationReviewEvents,
+            forKey: .visualObservationReviewEvents
+        )
+        try container.encode(
+            visualObservationReviewAttestations,
+            forKey: .visualObservationReviewAttestations
+        )
         try container.encode(claims, forKey: .claims)
+        try container.encode(claimEvents, forKey: .claimEvents)
+        try container.encode(claimReviewEvents, forKey: .claimReviewEvents)
+        try container.encode(claimReviewAttestations, forKey: .claimReviewAttestations)
+        try container.encode(
+            consumedReviewAuthorizationIDs,
+            forKey: .consumedReviewAuthorizationIDs
+        )
         try container.encode(graph, forKey: .graph)
+        try container.encode(removedRelationships, forKey: .removedRelationships)
+        try container.encodeIfPresent(lastSchemaVersion, forKey: .lastSchemaVersion)
         try container.encodeIfPresent(lastSequence, forKey: .lastSequence)
+        try container.encodeIfPresent(lastEventID, forKey: .lastEventID)
         try container.encodeIfPresent(lastEventHash, forKey: .lastEventHash)
         try container.encode(appliedEventIDs, forKey: .appliedEventIDs)
         try container.encode(eventBoundaries, forKey: .eventBoundaries)
@@ -125,8 +339,12 @@ public struct ScoutState: Codable, Equatable, Sendable, CanonicalRepresentable {
 
 public enum ScoutReducerError: Error, Equatable, Sendable {
     case emptyReplay
+    case authorization(ScoutEventAuthorizationError)
+    case writeSchemaMustBeCurrent(expected: EventSchemaVersion, actual: EventSchemaVersion)
     case invalidIntegrity(EventID)
     case unsupportedSchema(EventSchemaVersion)
+    case authorizationUnavailableInSchema(eventID: EventID, schemaVersion: EventSchemaVersion)
+    case schemaVersionRegression(previous: EventSchemaVersion, actual: EventSchemaVersion)
     case sessionMismatch(expected: SessionID, actual: SessionID)
     case unexpectedSequence(expected: UInt64, actual: UInt64)
     case previousHashMismatch(expected: SHA256Digest?, actual: SHA256Digest?)
@@ -151,6 +369,23 @@ public enum ScoutReducerError: Error, Equatable, Sendable {
     case modelCallReceiptConflict(ModelCallReceiptID)
     case duplicateModelResponse(provider: String, responseID: String)
     case modelResponseConflict(provider: String, responseID: String)
+    case derivedEventManifestBaseMismatch(
+        receiptID: ModelCallReceiptID,
+        expected: ModelInputEventBoundary,
+        actual: ModelInputEventBoundary?
+    )
+    case derivedEventManifestInterrupted(modelCallEventID: EventID, eventID: EventID)
+    case derivedEventManifestUnexpectedEvent(modelCallEventID: EventID, eventID: EventID)
+    case derivedEventManifestRootMismatch(
+        receiptID: ModelCallReceiptID,
+        expected: SHA256Digest,
+        actual: SHA256Digest
+    )
+    case incompleteDerivedEventManifest(
+        receiptID: ModelCallReceiptID,
+        expectedCount: UInt16,
+        actualCount: UInt16
+    )
     case duplicateVisualObservation(VisualObservationID)
     case missingVisualObservation(VisualObservationID)
     case invalidInitialVisualObservationStatus(VisualObservationStatus)
@@ -163,11 +398,15 @@ public enum ScoutReducerError: Error, Equatable, Sendable {
     case missingClaim(ClaimID)
     case invalidInitialClaimStatus(ClaimStatus)
     case invalidClaimReview(claimID: ClaimID)
+    case invalidLocalReviewAttestation(LocalReviewTarget)
+    case protectedClaimCannotBeSuperseded(ClaimID)
     case missingEntity(EntityID)
     case entityKindConflict(EntityID)
+    case entityWasRetired(EntityID)
     case invalidAttributeKey(String)
     case missingRelationship(RelationshipID)
     case relationshipShapeConflict(RelationshipID)
+    case relationshipWasRemoved(RelationshipID)
     case emptyClaims(RelationshipID)
 }
 
@@ -175,12 +414,46 @@ public enum ScoutReducerError: Error, Equatable, Sendable {
 public enum ScoutGraphReducer {
     public static func replay(_ events: [ScoutEventEnvelope]) throws -> ScoutState {
         guard let first = events.first else { throw ScoutReducerError.emptyReplay }
-        return try events.reduce(into: ScoutState(sessionID: first.sessionID)) { state, event in
-            state = try reduce(state, event: event)
+        let state = try events.reduce(into: ScoutState(sessionID: first.sessionID)) { state, event in
+            state = try reducePersisted(state, event: event)
         }
+        try validateBatchTerminal(state)
+        return state
     }
 
-    public static func reduce(_ state: ScoutState, event: ScoutEventEnvelope) throws -> ScoutState {
+    /// Ensures a write/replay batch did not stop after recording a manifest but before applying its
+    /// exact committed derived-event sequence. Stores call this on cloned candidate state before
+    /// making a batch visible.
+    public static func validateBatchTerminal(_ state: ScoutState) throws {
+        guard let progress = state.pendingDerivedEventProjections.values.sorted(by: {
+            $0.modelCallEventID < $1.modelCallEventID
+        }).first else { return }
+        throw ScoutReducerError.incompleteDerivedEventManifest(
+            receiptID: progress.receiptID,
+            expectedCount: progress.manifest.eventCount,
+            actualCount: progress.consumedCount
+        )
+    }
+
+    /// Applies a newly authorized event. Canonical stores accept only this opaque write type.
+    public static func reduce(
+        _ state: ScoutState,
+        event: ValidatedScoutEvent
+    ) throws -> ScoutState {
+        guard event.envelope.schemaVersion == .current else {
+            throw ScoutReducerError.writeSchemaMustBeCurrent(
+                expected: .current,
+                actual: event.envelope.schemaVersion
+            )
+        }
+        return try reducePersisted(state, event: event.envelope)
+    }
+
+    /// Verifies and replays a persisted envelope. This API cannot create an appendable event.
+    public static func reducePersisted(
+        _ state: ScoutState,
+        event: ScoutEventEnvelope
+    ) throws -> ScoutState {
         guard event.hasValidIntegrity else {
             throw ScoutReducerError.invalidIntegrity(event.id)
         }
@@ -188,6 +461,18 @@ public enum ScoutGraphReducer {
               event.schemaVersion.minor <= EventSchemaVersion.current.minor
         else {
             throw ScoutReducerError.unsupportedSchema(event.schemaVersion)
+        }
+        if event.schemaVersion.minor < 3, event.authorization != nil {
+            throw ScoutReducerError.authorizationUnavailableInSchema(
+                eventID: event.id,
+                schemaVersion: event.schemaVersion
+            )
+        }
+        if let previous = state.lastSchemaVersion, event.schemaVersion < previous {
+            throw ScoutReducerError.schemaVersionRegression(
+                previous: previous,
+                actual: event.schemaVersion
+            )
         }
         if case .modelCallRecorded = event.payload, event.schemaVersion.minor < 1 {
             throw ScoutReducerError.payloadUnavailableInSchema(
@@ -204,6 +489,21 @@ public enum ScoutGraphReducer {
                 )
             default:
                 break
+            }
+        }
+        if event.schemaVersion.minor < 4,
+           case .localReviewAttested = event.payload
+        {
+            throw ScoutReducerError.payloadUnavailableInSchema(
+                kind: event.payload.kind,
+                schemaVersion: event.schemaVersion
+            )
+        }
+        if event.schemaVersion.minor >= 3 {
+            do {
+                try ScoutEventAuthorizationPolicy.validate(event, in: state)
+            } catch let error as ScoutEventAuthorizationError {
+                throw ScoutReducerError.authorization(error)
             }
         }
         guard event.sessionID == state.sessionID else {
@@ -245,17 +545,22 @@ public enum ScoutGraphReducer {
             throw ScoutReducerError.sessionHasEnded
         }
 
+        try requirePendingManifestContinuation(event, in: state)
+
         var next = state
-        try apply(event.payload, to: &next)
+        try apply(event, to: &next)
+        try advanceDerivedEventManifest(for: event, in: &next)
         next.eventBoundaries[event.id] = ModelInputEventBoundary(event)
+        next.lastSchemaVersion = event.schemaVersion
         next.lastSequence = event.sequence
+        next.lastEventID = event.id
         next.lastEventHash = event.integrityHash
         next.appliedEventIDs.insert(event.id)
         return next
     }
 
-    private static func apply(_ payload: ScoutEventPayload, to state: inout ScoutState) throws {
-        switch payload {
+    private static func apply(_ event: ScoutEventEnvelope, to state: inout ScoutState) throws {
+        switch event.payload {
         case let .sessionStarted(session):
             guard state.session == nil else { throw ScoutReducerError.sessionAlreadyStarted }
             guard session.id == state.sessionID,
@@ -299,6 +604,7 @@ public enum ScoutGraphReducer {
                 throw ScoutReducerError.unknownUtterance(utteranceID)
             }
             state.evidence[evidence.id] = evidence
+            state.evidenceEvents[evidence.id] = event.id
 
         case let .modelCallRecorded(receipt):
             guard let actualBoundary = state.eventBoundaries[receipt.inputBoundary.eventID] else {
@@ -334,6 +640,12 @@ public enum ScoutGraphReducer {
                 )
             }
             state.modelCallReceipts[receipt.id] = receipt
+            state.modelCallEvents[event.id] = receipt.id
+            try registerDerivedEventManifest(
+                receipt,
+                modelCallEventID: event.id,
+                in: &state
+            )
 
         case let .visualObservationProposed(observation):
             guard observation.status == .proposed else {
@@ -354,6 +666,7 @@ public enum ScoutGraphReducer {
                 throw ScoutReducerError.invalidVisualObservationModelPurpose(receipt.purpose)
             }
             state.visualObservations[observation.id] = observation
+            state.visualObservationEvents[observation.id] = event.id
 
         case let .visualObservationReviewed(review):
             guard let observation = state.visualObservations[review.observationID] else {
@@ -365,12 +678,24 @@ public enum ScoutGraphReducer {
             state.visualObservations[review.observationID] = observation.reviewed(
                 review.disposition
             )
+            state.visualObservationReviewAttestations[review.observationID] = reviewAttestation(
+                for: event
+            )
+            state.visualObservationReviewEvents[review.observationID] = event.id
+            if let authorizationID = event.authorization?.localReviewAuthorization?.id {
+                state.consumedReviewAuthorizationIDs.insert(authorizationID)
+            }
 
         case let .entityUpserted(entity):
             let entity = entity.normalized()
             try validateAttributeKeys(entity.attributes)
             try requireEvidence(entity.evidenceIDs, subject: entity.id.rawValue, in: state)
             if let existing = state.graph.entities[entity.id] {
+                if event.schemaVersion.minor >= 3,
+                   case .retired = existing.lifecycle
+                {
+                    throw ScoutReducerError.entityWasRetired(entity.id)
+                }
                 guard existing.kind == entity.kind else {
                     throw ScoutReducerError.entityKindConflict(entity.id)
                 }
@@ -403,12 +728,21 @@ public enum ScoutGraphReducer {
                 guard let superseded = state.claims[supersededID] else {
                     throw ScoutReducerError.missingClaim(supersededID)
                 }
+                if event.schemaVersion.minor >= 3 {
+                    let canSupersede = superseded.status == .proposed
+                        && (superseded.trust.validationStatus == .unreviewed
+                            || superseded.trust.validationStatus == .needsValidation)
+                    guard canSupersede else {
+                        throw ScoutReducerError.protectedClaimCannotBeSuperseded(supersededID)
+                    }
+                }
                 state.claims[supersededID] = superseded.reviewed(
                     status: .superseded,
                     trust: superseded.trust
                 )
             }
             state.claims[claim.id] = claim
+            state.claimEvents[claim.id] = event.id
 
         case let .claimReviewed(review):
             guard let claim = state.claims[review.claimID] else {
@@ -426,9 +760,47 @@ public enum ScoutGraphReducer {
                 status: review.status,
                 trust: review.trust
             )
+            state.claimReviewAttestations[review.claimID] = reviewAttestation(for: event)
+            state.claimReviewEvents[review.claimID] = event.id
+            if let authorizationID = event.authorization?.localReviewAuthorization?.id {
+                state.consumedReviewAuthorizationIDs.insert(authorizationID)
+            }
+
+        case let .localReviewAttested(attestation):
+            guard let authorization = event.authorization?.localReviewAuthorization else {
+                throw ScoutReducerError.invalidLocalReviewAttestation(attestation.target)
+            }
+            switch attestation.target {
+            case let .claim(claimID):
+                guard let claim = state.claims[claimID],
+                      LocalReviewIntent.isTerminalReviewedClaim(claim),
+                      state.claimReviewEvents[claimID] != nil,
+                      case .legacyUnattested? = state.claimReviewAttestations[claimID]
+                else {
+                    throw ScoutReducerError.invalidLocalReviewAttestation(attestation.target)
+                }
+                state.claimReviewAttestations[claimID] = .deviceOwnerAuthenticated(authorization)
+
+            case let .visualObservation(observationID):
+                guard let observation = state.visualObservations[observationID],
+                      observation.status == .confirmed || observation.status == .rejected,
+                      state.visualObservationReviewEvents[observationID] != nil,
+                      case .legacyUnattested? = state.visualObservationReviewAttestations[observationID]
+                else {
+                    throw ScoutReducerError.invalidLocalReviewAttestation(attestation.target)
+                }
+                state.visualObservationReviewAttestations[observationID] =
+                    .deviceOwnerAuthenticated(authorization)
+            }
+            state.consumedReviewAuthorizationIDs.insert(authorization.id)
 
         case let .relationshipUpserted(relationship):
             let relationship = relationship.normalized()
+            if event.schemaVersion.minor >= 3,
+               state.removedRelationships[relationship.id] != nil
+            {
+                throw ScoutReducerError.relationshipWasRemoved(relationship.id)
+            }
             try validateAttributeKeys(relationship.attributes)
             guard state.graph.entities[relationship.sourceID] != nil else {
                 throw ScoutReducerError.missingEntity(relationship.sourceID)
@@ -463,7 +835,153 @@ public enum ScoutGraphReducer {
             guard state.graph.relationships.removeValue(forKey: removal.relationshipID) != nil else {
                 throw ScoutReducerError.missingRelationship(removal.relationshipID)
             }
+            state.removedRelationships[removal.relationshipID] = removal
         }
+    }
+
+    private static func registerDerivedEventManifest(
+        _ receipt: ModelCallReceipt,
+        modelCallEventID: EventID,
+        in state: inout ScoutState
+    ) throws {
+        guard let manifest = receipt.derivedEventManifest else { return }
+        let actualBase = currentBoundary(in: state)
+        guard actualBase == manifest.projectionBase else {
+            throw ScoutReducerError.derivedEventManifestBaseMismatch(
+                receiptID: receipt.id,
+                expected: manifest.projectionBase,
+                actual: actualBase
+            )
+        }
+
+        let seed = manifest.seed(receiptID: receipt.id, outputHash: receipt.outputHash)
+        let progress = DerivedEventProjectionProgress(
+            receiptID: receipt.id,
+            modelCallEventID: modelCallEventID,
+            manifest: manifest,
+            consumedCount: 0,
+            rollingRoot: seed
+        )
+        if manifest.eventCount == 0 {
+            guard seed == manifest.finalRoot else {
+                throw ScoutReducerError.derivedEventManifestRootMismatch(
+                    receiptID: receipt.id,
+                    expected: manifest.finalRoot,
+                    actual: seed
+                )
+            }
+            state.completedDerivedEventProjections[modelCallEventID] = progress
+        } else {
+            state.pendingDerivedEventProjections[modelCallEventID] = progress
+        }
+    }
+
+    private static func requirePendingManifestContinuation(
+        _ event: ScoutEventEnvelope,
+        in state: ScoutState
+    ) throws {
+        guard let pending = state.pendingDerivedEventProjections.values.sorted(by: {
+            $0.modelCallEventID < $1.modelCallEventID
+        }).first else { return }
+        guard event.authorization?.scope == .modelProjection,
+              event.correlationID == pending.modelCallEventID,
+              event.causationID == pending.modelCallEventID,
+              isDerivedModelPayload(event.payload)
+        else {
+            throw ScoutReducerError.derivedEventManifestInterrupted(
+                modelCallEventID: pending.modelCallEventID,
+                eventID: event.id
+            )
+        }
+    }
+
+    private static func advanceDerivedEventManifest(
+        for event: ScoutEventEnvelope,
+        in state: inout ScoutState
+    ) throws {
+        guard event.authorization?.scope == .modelProjection,
+              isDerivedModelPayload(event.payload),
+              let modelCallEventID = event.correlationID,
+              modelCallEventID == event.causationID,
+              let receiptID = state.modelCallEvents[modelCallEventID],
+              let receipt = state.modelCallReceipts[receiptID],
+              receipt.derivedEventManifest != nil
+        else { return }
+
+        if state.completedDerivedEventProjections[modelCallEventID] != nil {
+            throw ScoutReducerError.derivedEventManifestUnexpectedEvent(
+                modelCallEventID: modelCallEventID,
+                eventID: event.id
+            )
+        }
+        guard let progress = state.pendingDerivedEventProjections[modelCallEventID] else {
+            throw ScoutReducerError.derivedEventManifestUnexpectedEvent(
+                modelCallEventID: modelCallEventID,
+                eventID: event.id
+            )
+        }
+
+        let entry = DerivedEventManifestEntry(eventID: event.id, payload: event.payload)
+        let nextRoot = DerivedEventManifest.advance(
+            root: progress.rollingRoot,
+            ordinal: progress.consumedCount,
+            entry: entry
+        )
+        let advancedCount = progress.consumedCount.addingReportingOverflow(1)
+        guard !advancedCount.overflow,
+              advancedCount.partialValue <= progress.manifest.eventCount
+        else {
+            throw ScoutReducerError.derivedEventManifestUnexpectedEvent(
+                modelCallEventID: modelCallEventID,
+                eventID: event.id
+            )
+        }
+        let nextCount = advancedCount.partialValue
+        let next = DerivedEventProjectionProgress(
+            receiptID: progress.receiptID,
+            modelCallEventID: progress.modelCallEventID,
+            manifest: progress.manifest,
+            consumedCount: nextCount,
+            rollingRoot: nextRoot
+        )
+
+        if nextCount == progress.manifest.eventCount {
+            guard nextRoot == progress.manifest.finalRoot else {
+                throw ScoutReducerError.derivedEventManifestRootMismatch(
+                    receiptID: progress.receiptID,
+                    expected: progress.manifest.finalRoot,
+                    actual: nextRoot
+                )
+            }
+            state.pendingDerivedEventProjections.removeValue(forKey: modelCallEventID)
+            state.completedDerivedEventProjections[modelCallEventID] = next
+        } else {
+            state.pendingDerivedEventProjections[modelCallEventID] = next
+        }
+    }
+
+    private static func isDerivedModelPayload(_ payload: ScoutEventPayload) -> Bool {
+        switch payload {
+        case .visualObservationProposed,
+             .entityUpserted,
+             .claimProposed,
+             .relationshipUpserted:
+            true
+        default:
+            false
+        }
+    }
+
+    private static func reviewAttestation(for event: ScoutEventEnvelope) -> LocalReviewAttestation {
+        if let authorization = event.authorization?.localReviewAuthorization {
+            return .deviceOwnerAuthenticated(authorization)
+        }
+        return .legacyUnattested(schemaVersion: event.schemaVersion)
+    }
+
+    private static func currentBoundary(in state: ScoutState) -> ModelInputEventBoundary? {
+        guard let lastEventID = state.lastEventID else { return nil }
+        return state.eventBoundaries[lastEventID]
     }
 
     private static func requireEvidence(

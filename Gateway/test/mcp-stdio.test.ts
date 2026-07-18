@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -18,12 +19,21 @@ function textContent(result: unknown): string {
   return first.text;
 }
 
-test("Scout plugin launches the approved-pack MCP surface over owned stdio", async (context) => {
+test("archive-shaped Scout plugin launches the approved-pack MCP surface over owned stdio", async (context) => {
   const workspace = resolve(import.meta.dirname, "../..");
-  const pluginRoot = resolve(workspace, "Plugins/scout");
-  const directory = await mkdtemp(resolve(workspace, "Gateway/.mcp-stdio-test-"));
-  context.after(() => rm(directory, { recursive: true, force: true }));
-  const store = new ContextPackStore(directory, TEST_APPROVAL_OPTIONS);
+  const sourcePlugin = resolve(workspace, "Plugins/scout");
+  const pluginRoot = await mkdtemp(join(tmpdir(), "scout-plugin-archive-"));
+  const dataRoot = join(pluginRoot, "data");
+  const directory = join(dataRoot, "context-packs");
+  await mkdir(join(pluginRoot, ".codex-plugin"), { recursive: true });
+  await mkdir(join(pluginRoot, "mcp"), { recursive: true });
+  await copyFile(
+    join(sourcePlugin, ".codex-plugin/plugin.json"),
+    join(pluginRoot, ".codex-plugin/plugin.json"),
+  );
+  await copyFile(join(sourcePlugin, "mcp/scout-mcp.cjs"), join(pluginRoot, "mcp/scout-mcp.cjs"));
+  context.after(() => rm(pluginRoot, { recursive: true, force: true }));
+  const store = new ContextPackStore(directory, TEST_APPROVAL_OPTIONS, dataRoot);
   await store.put(makeContextPack({ context_pack_id: "pack-stdio" }));
 
   const client = new Client({ name: "scout-stdio-test", version: "1.0.0" });
@@ -35,7 +45,7 @@ test("Scout plugin launches the approved-pack MCP surface over owned stdio", asy
     env: {
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       SCOUT_CONTEXT_PACK_DIR: directory,
-      SCOUT_DATA_ROOT: workspace,
+      SCOUT_DATA_ROOT: dataRoot,
       SCOUT_APPROVAL_HMAC_KEY: TEST_APPROVAL_OPTIONS.key,
       SCOUT_APPROVAL_KEY_ID: TEST_APPROVAL_OPTIONS.keyID,
     },
@@ -48,4 +58,28 @@ test("Scout plugin launches the approved-pack MCP surface over owned stdio", asy
   assert.ok(tools.tools.some((tool) => tool.name === "scout_get_context_pack"));
   const result = await client.callTool({ name: "scout_list_context_packs", arguments: {} });
   assert.equal(JSON.parse(textContent(result)).context_packs[0].context_pack_id, "pack-stdio");
+
+  const unconfiguredClient = new Client({ name: "scout-stdio-unconfigured-test", version: "1.0.0" });
+  const unconfiguredTransport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["./mcp/scout-mcp.cjs"],
+    cwd: pluginRoot,
+    stderr: "pipe",
+    env: {
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      SCOUT_CONTEXT_PACK_DIR: directory,
+      SCOUT_DATA_ROOT: dataRoot,
+    },
+  });
+  context.after(() => unconfiguredClient.close());
+  await unconfiguredClient.connect(unconfiguredTransport);
+  assert.ok(unconfiguredTransport.pid);
+  assert.ok((await unconfiguredClient.listTools()).tools.some(
+    (tool) => tool.name === "scout_get_context_pack",
+  ));
+  const blockedRead = await unconfiguredClient.callTool({
+    name: "scout_get_context_pack",
+    arguments: { context_pack_id: "pack-stdio" },
+  });
+  assert.equal(blockedRead.isError, true);
 });

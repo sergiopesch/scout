@@ -16,6 +16,13 @@ test("Gateway accepts only explicit loopback bind hosts", () => {
   }
 });
 
+test("Gateway defaults realtime transcription to a supported production model", () => {
+  assert.equal(
+    loadGatewayConfig(baseEnvironment, { loadWorkspaceEnv: false }).realtimeModel,
+    "gpt-4o-mini-transcribe",
+  );
+});
+
 test("Gateway cannot be configured to bind off-host", () => {
   assert.throws(
     () => loadGatewayConfig({

@@ -8,6 +8,9 @@ and secret boundaries are product requirements rather than implementation sugges
 
 ## Development setup
 
+These commands are for maintainers and other collaborators who already have written authorisation to
+use the Scout-owned source. Public repository access does not itself grant that permission.
+
 ```sh
 cp .env.example .env.local
 # Add OPENAI_API_KEY once if live intelligence is required.
@@ -56,6 +59,10 @@ release credentials, or generated runtime data.
 
 ## Public distribution
 
-The repository intentionally has no public license. Do not make it public or distribute binaries
-until the owner selects a project license and release operators include the matching Node.js license
-and generated SBOM.
+The repository is publicly viewable but Scout-owned source intentionally remains all rights reserved.
+Public visibility is not permission to clone for use, modify, or redistribute Scout source or binaries.
+Identified third-party components remain under their own terms. External code contributions are not
+accepted until contribution terms are published; security reports belong in GitHub private
+vulnerability reporting and must never be placed in a public issue. Authorised release operators must
+include the matching Node.js license, complete Gateway dependency licenses/notices, and the
+build-specific SBOM.

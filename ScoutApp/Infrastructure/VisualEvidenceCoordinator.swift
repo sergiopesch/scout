@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import ScoutCore
+import ScoutLocalReviewAuthority
 import UniformTypeIdentifiers
 
 /// Owns the explicit user-selection workflow for whiteboards and architecture images.
@@ -11,12 +12,25 @@ final class VisualEvidenceCoordinator {
     typealias PrepareImage = @Sendable (URL) throws -> PreparedImageEvidence
     typealias ObserveImage = @Sendable (ImageObservationRequest) async throws -> ImageObservationResult
     typealias SelectImage = @MainActor @Sendable () async -> URL?
+    typealias AuthorizeReview = @Sendable (LocalReviewIntent) async throws -> AuthenticatedLocalReview
+    typealias PrepareReview = @Sendable (
+        _ sessionID: String,
+        _ observationID: String,
+        _ disposition: VisualObservationDisposition
+    ) async throws -> LiveEventJournal.VisualObservationReviewPreparation
+    typealias RecordReview = @Sendable (
+        _ sessionID: String,
+        _ authenticatedReview: AuthenticatedLocalReview
+    ) async throws -> LiveEventJournal.VisualObservationReviewReceipt
 
     private weak var workspace: ScoutWorkspace?
     private let journal: LiveEventJournal
     private let prepareImage: PrepareImage
     private let observeImage: ObserveImage
     private let selectImage: SelectImage
+    private let authorizeReview: AuthorizeReview
+    private let prepareReview: PrepareReview
+    private let recordReview: RecordReview
     private var importTask: Task<Void, Never>?
     private var reviewTasks: [String: Task<Void, Never>] = [:]
 
@@ -26,12 +40,14 @@ final class VisualEvidenceCoordinator {
         importer: ImageEvidenceImporter = .init(),
         client: ImageObservationClient = .init()
     ) {
+        let reviewAuthority = DeviceOwnerReviewAuthority()
         self.init(
             workspace: workspace,
             journal: journal,
             prepareImage: { try importer.prepareUserSelectedImage(at: $0) },
             observeImage: { try await client.observe($0) },
-            selectImage: Self.presentImagePanel
+            selectImage: Self.presentImagePanel,
+            authorizeReview: { try await reviewAuthority.authorize($0) }
         )
     }
 
@@ -40,13 +56,32 @@ final class VisualEvidenceCoordinator {
         journal: LiveEventJournal,
         prepareImage: @escaping PrepareImage,
         observeImage: @escaping ObserveImage,
-        selectImage: @escaping SelectImage = VisualEvidenceCoordinator.presentImagePanel
+        selectImage: @escaping SelectImage = VisualEvidenceCoordinator.presentImagePanel,
+        authorizeReview: @escaping AuthorizeReview = {
+            try await DeviceOwnerReviewAuthority().authorize($0)
+        },
+        prepareReview: PrepareReview? = nil,
+        recordReview: RecordReview? = nil
     ) {
         self.workspace = workspace
         self.journal = journal
         self.prepareImage = prepareImage
         self.observeImage = observeImage
         self.selectImage = selectImage
+        self.authorizeReview = authorizeReview
+        self.prepareReview = prepareReview ?? { sessionID, observationID, disposition in
+            try await journal.prepareVisualObservationReview(
+                sessionID: sessionID,
+                observationID: observationID,
+                disposition: disposition
+            )
+        }
+        self.recordReview = recordReview ?? { sessionID, authenticatedReview in
+            try await journal.recordVisualObservationReview(
+                sessionID: sessionID,
+                authenticatedReview: authenticatedReview
+            )
+        }
     }
 
     func install() {
@@ -61,8 +96,12 @@ final class VisualEvidenceCoordinator {
     func cancel() {
         importTask?.cancel()
         importTask = nil
+        let observationIDs = Array(reviewTasks.keys)
         reviewTasks.values.forEach { $0.cancel() }
         reviewTasks.removeAll()
+        for observationID in observationIDs {
+            workspace?.setVisualObservationReviewInProgress(observationID, false)
+        }
     }
 
     /// Testable workflow entry point after the user has explicitly selected a local file.
@@ -152,29 +191,60 @@ final class VisualEvidenceCoordinator {
         workspace.setVisualObservationReviewInProgress(observationID, true)
         reviewTasks[observationID] = Task { [weak self] in
             guard let self else { return }
+            defer { self.reviewTasks[observationID] = nil }
             do {
-                _ = try await self.journal.recordVisualObservationReview(
-                    sessionID: sessionID,
-                    observationID: observationID,
-                    disposition: coreDisposition
+                try Task.checkCancellation()
+                let preparation = try await self.prepareReview(
+                    sessionID,
+                    observationID,
+                    coreDisposition
                 )
+                try Task.checkCancellation()
                 guard self.workspace?.activeEvidenceSessionID == sessionID else {
-                    self.reviewTasks[observationID] = nil
+                    self.workspace?.setVisualObservationReviewInProgress(observationID, false)
                     return
                 }
-                self.workspace?.applyVisualObservationReview(
-                    observationID,
-                    status: disposition
-                )
-            } catch is CancellationError {
-                self.workspace?.setVisualObservationReviewInProgress(observationID, false)
+                let receipt: LiveEventJournal.VisualObservationReviewReceipt
+                switch preparation {
+                case let .alreadyCommitted(committed):
+                    receipt = committed
+                case let .authorizationRequired(intent):
+                    let authorization = try await self.authorizeReview(intent)
+                    try Task.checkCancellation()
+                    guard self.workspace?.activeEvidenceSessionID == sessionID else {
+                        self.workspace?.setVisualObservationReviewInProgress(observationID, false)
+                        return
+                    }
+                    receipt = try await self.recordReview(sessionID, authorization)
+                }
+                try Task.checkCancellation()
+                guard self.workspace?.activeEvidenceSessionID == sessionID else {
+                    self.workspace?.setVisualObservationReviewInProgress(observationID, false)
+                    return
+                }
+                guard let projection = WorkspaceStateProjector().project(receipt.canonicalState) else {
+                    throw VisualReviewError.missingCanonicalProjection
+                }
+                self.workspace?.applyCanonicalVisualEvidenceProjection(projection)
             } catch {
-                self.workspace?.failVisualObservationReview(
-                    observationID,
-                    message: error.localizedDescription
-                )
+                guard let workspace = self.workspace else { return }
+                if Task.isCancelled || workspace.activeEvidenceSessionID != sessionID {
+                    workspace.setVisualObservationReviewInProgress(observationID, false)
+                } else {
+                    workspace.failVisualObservationReview(
+                        observationID,
+                        message: error.localizedDescription
+                    )
+                }
             }
-            self.reviewTasks[observationID] = nil
+        }
+    }
+
+    private enum VisualReviewError: LocalizedError {
+        case missingCanonicalProjection
+
+        var errorDescription: String? {
+            "Scout could not rebuild the visual review from canonical event history."
         }
     }
 

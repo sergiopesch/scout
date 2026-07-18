@@ -117,7 +117,10 @@ struct ImageObservationProjector {
 }
 
 enum VisualObservationUIProjector {
-    static func card(_ observation: ScoutCore.VisualObservation) -> VisualEvidenceProposalCard {
+    static func card(
+        _ observation: ScoutCore.VisualObservation,
+        reviewAttestation: LocalReviewAttestation? = nil
+    ) -> VisualEvidenceProposalCard {
         let kind: VisualEvidenceProposalKind = switch observation.kind {
         case .entity: .entity
         case .relationship: .relationship
@@ -125,8 +128,14 @@ enum VisualObservationUIProjector {
         }
         let reviewStatus: VisualEvidenceReviewStatus = switch observation.status {
         case .proposed: .proposed
-        case .confirmed: .confirmed
-        case .rejected: .rejected
+        case .confirmed:
+            reviewAttestation?.isDeviceOwnerAuthenticated == true
+                ? .confirmed
+                : .legacyConfirmed
+        case .rejected:
+            reviewAttestation?.isDeviceOwnerAuthenticated == true
+                ? .rejected
+                : .legacyRejected
         }
         return VisualEvidenceProposalCard(
             id: observation.id.rawValue,

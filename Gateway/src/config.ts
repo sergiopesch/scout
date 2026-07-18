@@ -1,9 +1,16 @@
 import { existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve } from "node:path";
 import { config as loadDotEnv } from "dotenv";
 import { z } from "zod/v4";
+
+function isBundledPluginRoot(candidate: string): boolean {
+  return existsSync(resolve(candidate, ".codex-plugin/plugin.json"))
+    && existsSync(resolve(candidate, "mcp/scout-mcp.cjs"));
+}
+
+const currentWorkingDirectory = resolve(process.cwd());
+const bundledPluginRuntime = isBundledPluginRoot(currentWorkingDirectory);
 
 function findGatewayRoot(): string {
   const configured = process.env.SCOUT_GATEWAY_ROOT;
@@ -14,11 +21,12 @@ function findGatewayRoot(): string {
     }
     return candidate;
   }
+  if (bundledPluginRuntime) return currentWorkingDirectory;
   const candidates = [
-    resolve(process.cwd()),
-    resolve(process.cwd(), "Gateway"),
-    // The production plugin bundle launches with cwd=Plugins/scout.
-    resolve(process.cwd(), "../../Gateway"),
+    currentWorkingDirectory,
+    resolve(currentWorkingDirectory, "Gateway"),
+    // Compatibility fallback for an incomplete repository checkout without plugin markers.
+    resolve(currentWorkingDirectory, "../../Gateway"),
   ];
   const match = candidates.find((candidate) => existsSync(resolve(candidate, "package.json")));
   if (!match) {
@@ -29,9 +37,10 @@ function findGatewayRoot(): string {
 
 export const gatewayRoot = findGatewayRoot();
 export const workspaceRoot = process.env.SCOUT_WORKSPACE_ROOT === undefined
-  ? resolve(gatewayRoot, "..")
+  ? (bundledPluginRuntime ? currentWorkingDirectory : resolve(gatewayRoot, ".."))
   : resolve(process.env.SCOUT_WORKSPACE_ROOT);
-const pluginRuntime = resolve(process.cwd()) === resolve(workspaceRoot, "Plugins/scout");
+const pluginRuntime = bundledPluginRuntime
+  || currentWorkingDirectory === resolve(workspaceRoot, "Plugins/scout");
 export const dataRoot = process.env.SCOUT_DATA_ROOT === undefined
   ? (pluginRuntime && process.platform === "darwin"
       ? resolve(homedir(), "Library/Application Support/Scout")
@@ -43,14 +52,14 @@ let environmentLoaded = false;
 
 export function loadWorkspaceEnvironment(): void {
   if (environmentLoaded) return;
-  loadDotEnv({ path: workspaceEnvPath, override: false, quiet: true });
+  if (!pluginRuntime) loadDotEnv({ path: workspaceEnvPath, override: false, quiet: true });
   environmentLoaded = true;
 }
 
 const EnvironmentSchema = z.object({
   OPENAI_API_KEY: z.string().trim().min(20),
   OPENAI_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
-  OPENAI_REALTIME_MODEL: z.string().trim().min(1).max(100).default("gpt-realtime-whisper"),
+  OPENAI_REALTIME_MODEL: z.string().trim().min(1).max(100).default("gpt-4o-mini-transcribe"),
   OPENAI_DIARIZATION_MODEL: z.string().trim().min(1).max(100).default("gpt-4o-transcribe-diarize"),
   OPENAI_CLAIMS_MODEL: z.string().trim().min(1).max(100).default("gpt-5.6-luna"),
   OPENAI_VISION_MODEL: z.string().trim().min(1).max(100).optional(),
@@ -75,6 +84,7 @@ export interface GatewayConfig {
   readonly host: string;
   readonly port: number;
   readonly contextPackDirectory: string;
+  readonly contextPackContainmentRoot: string;
   readonly ingestToken: string | undefined;
   readonly gatewayInstanceID: string | undefined;
   readonly approvalToken: string | undefined;
@@ -150,6 +160,7 @@ export function loadGatewayConfig(
     host: parsed.data.SCOUT_GATEWAY_HOST,
     port: parsed.data.SCOUT_GATEWAY_PORT,
     contextPackDirectory: resolveContextPackDirectory(parsed.data.SCOUT_CONTEXT_PACK_DIR),
+    contextPackContainmentRoot: dataRoot,
     ingestToken: parsed.data.SCOUT_GATEWAY_TOKEN,
     gatewayInstanceID: parsed.data.SCOUT_GATEWAY_INSTANCE_ID,
     approvalToken: parsed.data.SCOUT_APPROVAL_TOKEN,
@@ -169,37 +180,11 @@ export function loadContextPackApprovalOptions(
   environment: NodeJS.ProcessEnv = process.env,
 ): { key: string; keyID: string; verificationKeys: Readonly<Record<string, string>> } | undefined {
   if (environment === process.env) loadWorkspaceEnvironment();
-  let key = environment.SCOUT_APPROVAL_HMAC_KEY;
-  let keyID = environment.SCOUT_APPROVAL_KEY_ID;
-  let verificationKeysValue = environment.SCOUT_APPROVAL_VERIFICATION_KEYS;
-  if (key === undefined && environment === process.env && process.platform === "darwin") {
-    const helper = resolve(workspaceRoot, ".build/tools/scout-launcher");
-    if (existsSync(helper)) {
-      let exported: unknown;
-      try {
-        exported = JSON.parse(execFileSync(helper, ["secrets", "approval-export"], {
-          encoding: "utf8",
-          timeout: 5_000,
-          maxBuffer: 128 * 1024,
-          stdio: ["ignore", "pipe", "pipe"],
-        }));
-      } catch {
-        throw new Error("Scout approval keys are unavailable from Keychain");
-      }
-      const parsed = z.object({
-        approvalKey: z.string().min(32).max(1024),
-        approvalKeyID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
-        verificationKeys: z.record(z.string(), z.string()).default({}),
-      }).passthrough().safeParse(exported);
-      if (!parsed.success) throw new Error("Scout approval Keychain contract is invalid");
-      key = parsed.data.approvalKey;
-      keyID = parsed.data.approvalKeyID;
-      verificationKeysValue = JSON.stringify(parsed.data.verificationKeys);
-    }
-  }
+  const key = environment.SCOUT_APPROVAL_HMAC_KEY;
+  const keyID = environment.SCOUT_APPROVAL_KEY_ID ?? "scout-local-v1";
+  const verificationKeysValue = environment.SCOUT_APPROVAL_VERIFICATION_KEYS;
   if (key === undefined) return undefined;
   if (key.length < 32) throw new Error("SCOUT_APPROVAL_HMAC_KEY is invalid");
-  keyID ??= "scout-local-v1";
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(keyID)) {
     throw new Error("SCOUT_APPROVAL_KEY_ID is invalid");
   }

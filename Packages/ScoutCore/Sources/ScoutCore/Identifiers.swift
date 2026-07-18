@@ -91,6 +91,7 @@ public enum RelationshipIDTag: Sendable {}
 public enum AssetIDTag: Sendable {}
 public enum ModelCallReceiptIDTag: Sendable {}
 public enum VisualObservationIDTag: Sendable {}
+public enum ReviewAuthorizationIDTag: Sendable {}
 
 public typealias SessionID = ScoutID<SessionIDTag>
 public typealias EventID = ScoutID<EventIDTag>
@@ -103,6 +104,7 @@ public typealias RelationshipID = ScoutID<RelationshipIDTag>
 public typealias AssetID = ScoutID<AssetIDTag>
 public typealias ModelCallReceiptID = ScoutID<ModelCallReceiptIDTag>
 public typealias VisualObservationID = ScoutID<VisualObservationIDTag>
+public typealias ReviewAuthorizationID = ScoutID<ReviewAuthorizationIDTag>
 
 /// Wall-clock time represented as an integer to avoid floating-point and date
 /// formatting differences in event hashes.

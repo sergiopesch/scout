@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { link, lstat, mkdir, open, readFile, readdir, realpath, unlink } from "node:fs/promises";
-import { basename, join, relative, resolve } from "node:path";
+import { chmod, link, lstat, mkdir, open, readFile, readdir, realpath, unlink } from "node:fs/promises";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod/v4";
 import { PublicError } from "./errors.js";
 
@@ -534,11 +534,13 @@ function assertContextPackIntegrity(body: ContextPackBody): void {
 
 export class ContextPackStore {
   readonly root: string;
+  private readonly containmentRoot: string;
   private readonly approvalAuthority: ContextPackApprovalAuthority | undefined;
   private readonly sessionWriteTails = new Map<string, Promise<void>>();
 
-  constructor(root: string, approvalOptions?: ContextPackApprovalOptions) {
+  constructor(root: string, approvalOptions?: ContextPackApprovalOptions, containmentRoot: string = root) {
     this.root = resolve(root);
+    this.containmentRoot = resolve(containmentRoot);
     this.approvalAuthority = approvalOptions === undefined
       ? undefined
       : new ContextPackApprovalAuthority(approvalOptions);
@@ -805,8 +807,36 @@ export class ContextPackStore {
 
   private async ensureRoot(): Promise<string> {
     try {
-      await mkdir(this.root, { recursive: true, mode: 0o700 });
-      return await realpath(this.root);
+      await mkdir(this.containmentRoot, { recursive: true, mode: 0o700 });
+      const boundaryMetadata = await lstat(this.containmentRoot);
+      if (!boundaryMetadata.isDirectory() || boundaryMetadata.isSymbolicLink()) throw new Error("unsafe boundary");
+      await chmod(this.containmentRoot, 0o700);
+
+      const lexicalPath = relative(this.containmentRoot, this.root);
+      if (isAbsolute(lexicalPath) || lexicalPath === ".." || lexicalPath.startsWith(`..${sep}`)) {
+        throw new Error("root escapes boundary");
+      }
+
+      let current = this.containmentRoot;
+      for (const component of lexicalPath.split(sep).filter(Boolean)) {
+        current = join(current, component);
+        try {
+          await mkdir(current, { mode: 0o700 });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        }
+        const metadata = await lstat(current);
+        if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("unsafe path component");
+        await chmod(current, 0o700);
+      }
+
+      const canonicalBoundary = await realpath(this.containmentRoot);
+      const canonicalRoot = await realpath(this.root);
+      const canonicalPath = relative(canonicalBoundary, canonicalRoot);
+      if (isAbsolute(canonicalPath) || canonicalPath === ".." || canonicalPath.startsWith(`..${sep}`)) {
+        throw new Error("canonical root escapes boundary");
+      }
+      return canonicalRoot;
     } catch {
       throw new PublicError(503, "context_pack_store_unavailable", "Context pack store is unavailable");
     }

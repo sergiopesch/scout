@@ -3,8 +3,8 @@
     "attachments" : [
       {
         "configurationName" : "Test Scheme Action",
-        "deviceId" : "00008122-001A65DA22F1001C",
-        "deviceName" : "My Mac",
+        "deviceId" : "redacted",
+        "deviceName" : "macOS audit host",
         "exportedFileName" : "65008296-52A4-4B9D-BF6E-4CD6432CF50E.png",
         "isAssociatedWithFailure" : false,
         "suggestedHumanReadableName" : "03-action-pack_0_8471CC34-1FDE-42A9-A437-084F68C341A2.png",
@@ -12,8 +12,8 @@
       },
       {
         "configurationName" : "Test Scheme Action",
-        "deviceId" : "00008122-001A65DA22F1001C",
-        "deviceName" : "My Mac",
+        "deviceId" : "redacted",
+        "deviceName" : "macOS audit host",
         "exportedFileName" : "939E16B2-B165-4A0B-8C2E-22449A8D7B31.png",
         "isAssociatedWithFailure" : false,
         "suggestedHumanReadableName" : "02-evidence_0_DCAAB498-BD4C-4F50-B1CE-8652587256BA.png",
@@ -21,8 +21,8 @@
       },
       {
         "configurationName" : "Test Scheme Action",
-        "deviceId" : "00008122-001A65DA22F1001C",
-        "deviceName" : "My Mac",
+        "deviceId" : "redacted",
+        "deviceName" : "macOS audit host",
         "exportedFileName" : "F0E3B8B2-2D1B-4E87-AB48-208329F269A8.png",
         "isAssociatedWithFailure" : false,
         "suggestedHumanReadableName" : "01-discovery_0_91BECE18-3033-4C89-8877-EF7604773122.png",

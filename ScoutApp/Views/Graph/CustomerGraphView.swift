@@ -4,8 +4,17 @@ struct CustomerGraphView: View {
     @Bindable var workspace: ScoutWorkspace
     @State private var zoom: CGFloat = 1
     @State private var showRelationshipLabels = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        let entities = workspace.entities
+        let relationships = workspace.relationships
+        let entitiesByID = Dictionary(uniqueKeysWithValues: entities.map { ($0.id, $0) })
+        let layoutSnapshot = entities.map(GraphLayoutSnapshot.init)
+        let needsValidationCount = relationships.reduce(into: 0) { count, relationship in
+            if relationship.needsValidation { count += 1 }
+        }
+
         VStack(spacing: 0) {
             ScoutPanelHeader(eyebrow: "Living customer model", title: "Current-state architecture") {
                 HStack(spacing: 6) {
@@ -36,14 +45,19 @@ struct CustomerGraphView: View {
                     GraphGrid()
 
                     GraphEdgesLayer(
-                        entities: workspace.entities,
-                        relationships: workspace.relationships,
+                        entitiesByID: entitiesByID,
+                        relationships: relationships,
                         canvasSize: size
                     )
 
                     if showRelationshipLabels {
-                        ForEach(Array(workspace.relationships.enumerated()), id: \.element.id) { index, relationship in
-                            if let labelPoint = labelPoint(for: relationship, at: index, in: size) {
+                        ForEach(Array(relationships.enumerated()), id: \.element.id) { index, relationship in
+                            if let labelPoint = labelPoint(
+                                for: relationship,
+                                at: index,
+                                in: size,
+                                entitiesByID: entitiesByID
+                            ) {
                                 HStack(spacing: 3) {
                                     Text(relationship.label)
                                     Image(systemName: relationship.needsValidation ? "questionmark.circle.fill" : relationship.provenance.symbol)
@@ -62,7 +76,7 @@ struct CustomerGraphView: View {
                         }
                     }
 
-                    ForEach(workspace.entities) { entity in
+                    ForEach(entities) { entity in
                         GraphEntityView(
                             entity: entity,
                             isSelected: workspace.selectedEntityID == entity.id
@@ -70,16 +84,19 @@ struct CustomerGraphView: View {
                             workspace.selectEntity(entity.id)
                         }
                         .position(point(for: entity, in: size))
-                        .transition(.scale(scale: 0.82).combined(with: .opacity))
+                        .transition(reduceMotion ? .identity : .scale(scale: 0.82).combined(with: .opacity))
                     }
                 }
                 .scaleEffect(zoom)
-                .animation(.snappy(duration: 0.52, extraBounce: 0.08), value: workspace.entities)
-                .animation(.easeInOut(duration: 0.2), value: zoom)
+                .animation(
+                    reduceMotion ? nil : .snappy(duration: 0.52, extraBounce: 0.08),
+                    value: layoutSnapshot
+                )
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: zoom)
             }
             .clipped()
             .accessibilityElement(children: .contain)
-            .accessibilityLabel("Customer reality graph with \(workspace.entities.count) entities and \(workspace.relationships.count) relationships; \(workspace.relationships.filter { $0.needsValidation }.count) relationships need validation")
+            .accessibilityLabel("Customer reality graph with \(entities.count) entities and \(relationships.count) relationships; \(needsValidationCount) relationships need validation")
             .accessibilityIdentifier("scout.customerGraph")
         }
         .scoutPanel()
@@ -115,9 +132,14 @@ struct CustomerGraphView: View {
     /// Relationship labels deliberately sample different points and sides of their edge. A single
     /// midpoint makes independent relationships collapse into one unreadable badge as the graph
     /// becomes denser.
-    private func labelPoint(for relationship: GraphRelationship, at index: Int, in size: CGSize) -> CGPoint? {
-        guard let source = workspace.entities.first(where: { $0.id == relationship.sourceID }),
-              let target = workspace.entities.first(where: { $0.id == relationship.targetID }) else {
+    private func labelPoint(
+        for relationship: GraphRelationship,
+        at index: Int,
+        in size: CGSize,
+        entitiesByID: [String: GraphEntity]
+    ) -> CGPoint? {
+        guard let source = entitiesByID[relationship.sourceID],
+              let target = entitiesByID[relationship.targetID] else {
             return nil
         }
         let sourcePoint = point(for: source, in: size)
@@ -134,6 +156,18 @@ struct CustomerGraphView: View {
             x: max(50, min(size.width - 50, rawX)),
             y: max(24, min(size.height - 24, rawY))
         )
+    }
+}
+
+private struct GraphLayoutSnapshot: Hashable {
+    let id: String
+    let x: Double
+    let y: Double
+
+    init(_ entity: GraphEntity) {
+        id = entity.id
+        x = entity.x
+        y = entity.y
     }
 }
 
@@ -169,13 +203,12 @@ private struct GraphGrid: View {
 }
 
 private struct GraphEdgesLayer: View {
-    let entities: [GraphEntity]
+    let entitiesByID: [String: GraphEntity]
     let relationships: [GraphRelationship]
     let canvasSize: CGSize
 
     var body: some View {
         Canvas(rendersAsynchronously: true) { context, _ in
-            let entitiesByID = Dictionary(uniqueKeysWithValues: entities.map { ($0.id, $0) })
             for relationship in relationships {
                 guard let source = entitiesByID[relationship.sourceID],
                       let target = entitiesByID[relationship.targetID] else { continue }
@@ -223,6 +256,7 @@ private struct GraphEntityView: View {
     let isSelected: Bool
     let action: () -> Void
     @State private var isHovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
@@ -271,8 +305,8 @@ private struct GraphEntityView: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-        .scaleEffect(isHovering ? 1.025 : 1)
-        .animation(.easeOut(duration: 0.14), value: isHovering)
+        .scaleEffect(isHovering && !reduceMotion ? 1.025 : 1)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovering)
         .accessibilityLabel("\(entity.kind.rawValue), \(entity.title), \(entity.subtitle), \(entity.provenance.rawValue), \(Int(entity.confidence * 100)) percent confidence")
         .accessibilityHint("Select to inspect supporting evidence")
         .accessibilityIdentifier("scout.graphEntity.\(entity.id)")

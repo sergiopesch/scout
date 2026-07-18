@@ -138,6 +138,8 @@ enum RealtimeSessionTimeMapper {
 /// Owns the low-latency provisional transcript channel. Speaker attribution is
 /// intentionally handled by the separate diarization refinement path.
 actor RealtimeTranscriptionClient {
+    nonisolated static let productionTranscriptionModel = "gpt-4o-mini-transcribe"
+
     private struct ClientEvent: Encodable {
         let type: String
         var audio: String?
@@ -160,7 +162,7 @@ actor RealtimeTranscriptionClient {
                     }
 
                     struct Transcription: Encodable {
-                        let model = "gpt-realtime-whisper"
+                        let model = RealtimeTranscriptionClient.productionTranscriptionModel
                         let language: String?
                         let delay = "low"
                     }

@@ -14,6 +14,8 @@ Scout.app
         ├── runtime/scout-gateway.cjs  bundled trusted Gateway
         ├── gateway-sbom.cdx.json
         ├── gateway-package-lock.json
+        ├── GATEWAY_THIRD_PARTY_LICENSES.txt
+        ├── NODE-LICENSE
         └── THIRD_PARTY_NOTICES.md
 ```
 
@@ -23,8 +25,9 @@ children as one failure domain.
 
 ## Prerequisites
 
-- macOS 15+, Xcode/Swift 6, XcodeGen, Node/npm 22+.
-- A self-contained arm64 Node executable. `otool -L` may list only `/System/Library` and `/usr/lib`
+- macOS 15+, Xcode/Swift 6, XcodeGen 2.45.4, and Node.js 24.14.0 for repository tooling.
+- The self-contained Node.js 24.14.0 macOS arm64 executable. `otool -L` may list only
+  `/System/Library` and `/usr/lib`
   dependencies; the package script reads the Mach-O architecture with `lipo` and rejects x86_64,
   universal, or Homebrew-style external-dylib runtimes.
 - For distributable builds, the matching upstream Node `LICENSE` file.
@@ -52,11 +55,15 @@ export SCOUT_RELEASE_VERSION=0.1.0
 export SCOUT_BUILD_NUMBER=1
 make package
 make provision-package
-make package-smoke
+make smoke-existing
+make live-smoke-existing  # optional provider-boundary check against these exact bytes
 ```
 
 This produces `dist/Scout-<version>/Scout.app`, a ZIP, a compressed DMG, and a release manifest with
-artifact byte sizes and SHA-256 digests. Ad-hoc output is for local validation only.
+artifact byte sizes and SHA-256 digests. `provision-package` is intentionally limited to an ad-hoc
+launcher: it transfers development credentials over authenticated child-process pipes without printing
+them. Ad-hoc output is for local validation only. As a shorter alternative, `make package-smoke` or
+`make live-smoke` rebuilds, provisions, and checks a fresh ad-hoc package in one command.
 
 ## Packaged live validation
 
@@ -82,9 +89,14 @@ make notarize
 
 The script:
 
-1. Builds Release Scout UI without implicit signing.
-2. Bundles Gateway and generates a production CycloneDX SBOM.
-3. Builds the native launcher and assembles the outer app.
+1. Requires one explicit mode, strict SemVer and positive-integer build inputs, constrains every
+   destructive output below `dist/`, refuses a distributable build from a dirty Git worktree, and
+   records the exact source commit and build-tool versions.
+2. Reinstalls Gateway dependencies with `npm ci`, builds Release Scout UI without implicit signing,
+   regenerates complete dependency license texts, bundles Gateway, and generates a build-specific
+   CycloneDX SBOM in ignored scratch space.
+3. Builds the native launcher, assembles the outer app, and rechecks tracked worktree cleanliness
+   immediately before signing.
 4. Signs Node with the JIT entitlement, the sandboxed nested UI with its least-privilege entitlements,
    then the launcher and outer app.
 5. Runs strict deep code-sign verification.
@@ -92,7 +104,8 @@ The script:
    validates the app.
 7. Rebuilds, verifies, and signs the DMG; submits it; requires a clean log; staples it; and validates
    the ticket.
-8. Runs Gatekeeper assessment and writes the release manifest.
+8. Runs Gatekeeper assessment and writes a provenance-bearing release manifest that hashes the SBOM,
+   lockfile, Gateway licenses, matching Node license, runtime, ZIP, and DMG.
 
 Every failure stops the release. Never add `--deep` to the signing operation itself; components are
 signed explicitly inside-out. `--deep` is used only for final verification.
@@ -100,26 +113,32 @@ signed explicitly inside-out. `--deep` is used only for final verification.
 After notarization, exercise the exact notarized app without rebuilding it:
 
 ```sh
-make provision-package
+dist/Scout-${SCOUT_RELEASE_VERSION}/Scout.app/Contents/MacOS/Scout secrets configure-openai
 make smoke-existing
 make live-smoke-existing  # when provider-boundary code changed
 ```
 
-`package-smoke` and `live-smoke` intentionally rebuild an ad-hoc package. The `*-existing` targets are
-the release gates for bytes already produced by `make notarize`.
+The signed release launcher intentionally omits plaintext secret import/export. Its interactive
+`configure-openai` command requires fresh device-owner authentication, reads hidden terminal input,
+and creates the release namespace's first approval key without placing a credential in argv, shell
+history, or a file. `package-smoke`, `live-smoke`, and `provision-package` are ad-hoc-only workflows;
+the `*-existing` targets are the release gates for bytes already produced by `make notarize`.
 
 ## Release checklist
 
 - [ ] `git status` contains only intended release changes.
 - [ ] `SCOUT_RELEASE_VERSION` and `SCOUT_BUILD_NUMBER` are unique and documented in `CHANGELOG.md`.
 - [ ] `make check` passes.
-- [ ] `make provision-package` and `make smoke-existing` pass against the exact notarized app.
+- [ ] The notarized launcher's authenticated `secrets configure-openai` flow and `make smoke-existing`
+      pass against the exact notarized app; plaintext import/export remain unavailable.
 - [ ] `make live-smoke-existing` passes against that app when provider-boundary code changed.
 - [ ] Node executable is self-contained and its matching license is included.
-- [ ] SBOM and package lock are present in the app resources.
+- [ ] Build-specific SBOM, package lock, complete Gateway dependency licenses, and third-party notice
+      are present in the app resources and match the release-manifest hashes.
 - [ ] Developer ID identity is valid and not expired.
 - [ ] ZIP and DMG notarization, stapling, validation, and Gatekeeper assessment pass.
 - [ ] Release-manifest hashes match uploaded artifacts.
+- [ ] Release manifest records both clean-source checks and exact Xcode, Swift, XcodeGen, Node, and npm versions.
 - [ ] A clean Mac installation and microphone/screen consent flow are manually tested.
 - [ ] VoiceOver and keyboard-only action-pack approval are manually tested.
 - [ ] Repository tag and release notes point to the exact commit.

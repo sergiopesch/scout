@@ -63,7 +63,14 @@ struct WorkspaceStateProjector {
         }
         let entityKinds = Dictionary(uniqueKeysWithValues: coreEntities.map { ($0.id, $0.kind) })
 
-        let relationships = state.graph.relationships.values.sorted { $0.id < $1.id }.compactMap {
+        let activeClaims = state.claims.values.filter {
+            $0.status != .superseded && $0.status != .rejected
+        }.sorted { $0.id < $1.id }
+        let activeClaimIDs = Set(activeClaims.map(\.id))
+        let visibleCoreRelationships = state.graph.relationships.values.filter {
+            !$0.claimIDs.allSatisfy { !activeClaimIDs.contains($0) }
+        }.sorted { $0.id < $1.id }
+        let relationships = visibleCoreRelationships.compactMap {
             relationship -> GraphRelationship? in
             guard entityKinds[relationship.sourceID] != nil,
                   entityKinds[relationship.targetID] != nil
@@ -77,14 +84,13 @@ struct WorkspaceStateProjector {
                 isFriction: isFriction(relationship.kind),
                 provenance: provenance(relationship.trust),
                 needsValidation: relationship.trust.validationStatus != .validated,
-                supportingClaimIDs: relationship.claimIDs.map(\.rawValue),
+                supportingClaimIDs: relationship.claimIDs.filter {
+                    activeClaimIDs.contains($0)
+                }.map(\.rawValue),
                 evidenceIDs: relationship.evidenceIDs.map(\.rawValue)
             )
         }
 
-        let activeClaims = state.claims.values.filter {
-            $0.status != .superseded && $0.status != .rejected
-        }.sorted { $0.id < $1.id }
         let claims = activeClaims.map { claim in
             let evidence = claim.evidenceIDs.compactMap { state.evidence[$0] }
             let latestEvidence = evidence.max { $0.capturedAt < $1.capturedAt }
@@ -95,11 +101,36 @@ struct WorkspaceStateProjector {
             let speakerName = claim.assertedBy
                 .flatMap { speakers[$0]?.name }
                 ?? "Scout"
+            let hasAuthenticatedReview = state.claimReviewAttestations[claim.id]?
+                .isDeviceOwnerAuthenticated == true
+            let isAuthenticatedAcceptance = claim.status == .accepted
+                && hasAuthenticatedReview
+                && claim.trust.validationStatus == .validated
+            let reviewStatus: ClaimReviewStatus = if isAuthenticatedAcceptance {
+                .accepted
+            } else if claim.status == .accepted {
+                .legacyAccepted
+            } else {
+                .proposed
+            }
+            let baseDetail = claim.trust.rationale?.rawValue ?? "Evidence-linked claim."
+            let detail = if reviewStatus == .legacyAccepted {
+                "\(baseDetail) Legacy local review is not device-owner authenticated and cannot qualify this claim for build handoff."
+            } else {
+                baseDetail
+            }
+            let projectedProvenance: EvidenceKind = if reviewStatus == .legacyAccepted {
+                .proposed
+            } else if isAuthenticatedAcceptance {
+                .validated
+            } else {
+                provenance(claim.trust)
+            }
             return TrustClaim(
                 id: claim.id.rawValue,
                 title: claimTitle(claim, state: state),
-                detail: claim.trust.rationale?.rawValue ?? "Evidence-linked claim.",
-                provenance: claim.status == .accepted ? .validated : provenance(claim.trust),
+                detail: detail,
+                provenance: projectedProvenance,
                 confidence: confidence(claim.trust),
                 evidenceQuote: latestEvidence?.excerpt?.rawValue ?? "Evidence retained in Scout.",
                 speakerName: speakerName,
@@ -107,8 +138,8 @@ struct WorkspaceStateProjector {
                     timestamp(from: session.startedAt, to: $0.capturedAt)
                 } ?? "00:00",
                 relatedEntityID: relatedEntityID,
-                needsValidation: claim.status != .accepted
-                    || claim.trust.validationStatus != .validated,
+                needsValidation: !isAuthenticatedAcceptance,
+                reviewStatus: reviewStatus
             )
         }
 
@@ -122,10 +153,12 @@ struct WorkspaceStateProjector {
                 evidenceIDs: entity.evidenceIDs.map(\.rawValue)
             )
         }
-        for relationship in state.graph.relationships.values {
+        for relationship in visibleCoreRelationships {
             evidenceByProjectionID[relationship.id.rawValue] = ProjectionEvidenceLink(
                 projectionID: relationship.id.rawValue,
-                projectedClaimIDs: relationship.claimIDs.map(\.rawValue),
+                projectedClaimIDs: relationship.claimIDs.filter {
+                    activeClaimIDs.contains($0)
+                }.map(\.rawValue),
                 clientReferences: [],
                 evidenceUtteranceIDs: utteranceIDs(relationship.evidenceIDs, state: state),
                 evidenceIDs: relationship.evidenceIDs.map(\.rawValue)
@@ -205,7 +238,12 @@ struct WorkspaceStateProjector {
                 model: receipt.model.rawValue,
                 modelCallReceiptID: receipt.id.rawValue
             ),
-            observations.map(VisualObservationUIProjector.card)
+            observations.map {
+                VisualObservationUIProjector.card(
+                    $0,
+                    reviewAttestation: state.visualObservationReviewAttestations[$0.id]
+                )
+            }
         )
     }
 

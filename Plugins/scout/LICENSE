@@ -1,0 +1,11 @@
+Copyright (c) 2026 Sergio Peschiera. All rights reserved.
+
+This repository is publicly viewable, but it is not open source and no copyright or patent license is
+granted by publication. Except for the limited rights required for GitHub to host and display the
+repository under its Terms of Service, you may not use, copy, modify, distribute, sublicense, or sell
+Scout-owned portions of this software without prior written permission from the copyright holder.
+
+Third-party components remain governed by their respective licenses and notices. Those terms apply
+only to the identified third-party components and do not grant rights to Scout-owned source. See
+`Packaging/GATEWAY_THIRD_PARTY_LICENSES.txt`, `Packaging/THIRD_PARTY_NOTICES.md`, the generated SBOM,
+and any license files distributed beside packaged dependencies.

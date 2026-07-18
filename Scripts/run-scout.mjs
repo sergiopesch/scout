@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import {
   buildAppEnvironment,
+  buildGatewayEnvironment,
   createLaunchCredentials,
   parseGatewayStartedLine,
 } from "./run-scout-lib.mjs";
@@ -101,7 +102,10 @@ async function main() {
   const gateway = spawn(process.execPath, [gatewayEntry], {
     cwd: gatewayDirectory,
     stdio: ["ignore", "ignore", "pipe"],
-    env: { ...process.env, ...credentials.gatewayEnvironment },
+    env: buildGatewayEnvironment({
+      parentEnvironment: process.env,
+      credentials,
+    }),
   });
   gateway.on("error", (error) => {
     process.stderr.write(`Scout Gateway could not start: ${error.message}\n`);

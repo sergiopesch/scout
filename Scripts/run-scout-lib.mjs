@@ -1,5 +1,24 @@
 import { randomBytes } from "node:crypto";
 
+const inheritedDevelopmentChildKeys = new Set([
+  "AppleLanguages",
+  "AppleLocale",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "PATH",
+  "TMPDIR",
+  "TZ",
+  "__CF_USER_TEXT_ENCODING",
+]);
+
+function inheritedDevelopmentEnvironment(parentEnvironment) {
+  return Object.fromEntries(
+    Object.entries(parentEnvironment).filter(([key]) => inheritedDevelopmentChildKeys.has(key)),
+  );
+}
+
 export function createLaunchCredentials(secretExport) {
   if (!secretExport || typeof secretExport.openAIAPIKey !== "string" || secretExport.openAIAPIKey.length < 20
     || typeof secretExport.approvalKey !== "string" || secretExport.approvalKey.length < 32
@@ -30,23 +49,25 @@ export function createLaunchCredentials(secretExport) {
   };
 }
 
+export function buildGatewayEnvironment({ parentEnvironment, credentials }) {
+  return {
+    ...inheritedDevelopmentEnvironment(parentEnvironment),
+    ...credentials.gatewayEnvironment,
+  };
+}
+
 export function buildAppEnvironment({ parentEnvironment, credentials, port }) {
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new Error("Scout Gateway returned an invalid ephemeral port");
   }
   const environment = {
-    ...parentEnvironment,
+    ...inheritedDevelopmentEnvironment(parentEnvironment),
     SCOUT_BRIDGE_URL: `http://127.0.0.1:${port}`,
     SCOUT_GATEWAY_TOKEN: credentials.gatewayToken,
     SCOUT_APPROVAL_TOKEN: credentials.approvalToken,
     SCOUT_GATEWAY_INSTANCE_ID: credentials.instanceID,
     SCOUT_GATEWAY_SUPERVISED: "1",
   };
-  delete environment.OPENAI_API_KEY;
-  delete environment.OPENAI_BASE_URL;
-  delete environment.SCOUT_APPROVAL_HMAC_KEY;
-  delete environment.SCOUT_APPROVAL_KEY_ID;
-  delete environment.SCOUT_APPROVAL_VERIFICATION_KEYS;
   return environment;
 }
 

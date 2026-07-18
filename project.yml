@@ -29,6 +29,9 @@ targets:
       - path: ScoutApp
     dependencies:
       - package: ScoutCore
+        product: ScoutCore
+      - package: ScoutCore
+        product: ScoutLocalReviewAuthority
       - package: ScoutPersistence
     settings:
       base:
@@ -38,7 +41,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Scout
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSMicrophoneUsageDescription: Scout listens only while you run a discovery session so it can build an evidence-linked live transcript.
-        INFOPLIST_KEY_NSScreenCaptureUsageDescription: Scout can capture meeting audio you explicitly select so it can model the conversation in real time.
+        INFOPLIST_KEY_NSScreenCaptureUsageDescription: Scout observes only screen content you explicitly choose. Raw pixels stay local and are excluded from handoff by default.
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_ENTITLEMENTS: ScoutApp/Resources/Scout.entitlements

@@ -232,6 +232,7 @@ enum ContextPackExportError: LocalizedError, Equatable {
     case invalidRevision
     case handoffNotReady
     case missingJournalHead
+    case missingCanonicalEvidence([String])
     case approvalScopeChanged
 
     var errorDescription: String? {
@@ -241,6 +242,8 @@ enum ContextPackExportError: LocalizedError, Equatable {
         case .invalidRevision: "Scout could not establish the next immutable context-pack revision."
         case .handoffNotReady: "Select a proof of value backed only by factual, validated evidence before approving a Codex handoff."
         case .missingJournalHead: "Scout must verify the canonical event-journal head before approving a Codex handoff."
+        case let .missingCanonicalEvidence(claimIDs):
+            "Scout cannot approve claims without canonical evidence IDs: \(claimIDs.joined(separator: ", "))."
         case .approvalScopeChanged: "The staged handoff no longer matches the exact bytes that were reviewed. Review and approve it again."
         }
     }
@@ -264,17 +267,16 @@ struct ContextPackExporter {
         previousContextPackSHA256: String? = nil,
         now: Date = .now
     ) throws -> ScoutContextPack {
-        if approved,
-           (workspace.captureState == .listening || !workspace.selectedPOCHasBuildReadyEvidence) {
+        if approved, workspace.captureState == .listening {
+            throw ContextPackExportError.handoffNotReady
+        }
+        let selectedPOC = Self.selectedPOC(from: workspace)
+        if approved, selectedPOC == nil {
             throw ContextPackExportError.handoffNotReady
         }
         let generatedAt = now.ISO8601Format(.iso8601)
         if approved, !Self.isSHA256(journalHeadSHA256) {
             throw ContextPackExportError.missingJournalHead
-        }
-        let selectedPOC = Self.selectedPOC(from: workspace)
-        if approved, selectedPOC == nil {
-            throw ContextPackExportError.handoffNotReady
         }
         let selectedClaimIDs = Set(selectedPOC?.supportingClaimIDs ?? [])
         let scopedClaims = approved
@@ -285,9 +287,27 @@ struct ContextPackExporter {
             throw ContextPackExportError.handoffNotReady
         }
 
+        let canonicalEvidenceIDsByClaimID = workspace.claimEvidenceIDsByID.mapValues { evidenceIDs in
+            Array(Set(evidenceIDs.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })).sorted()
+        }
+        if approved {
+            let missingEvidenceClaimIDs = selectedClaimIDs.filter {
+                canonicalEvidenceIDsByClaimID[$0]?.isEmpty != false
+            }.sorted()
+            guard missingEvidenceClaimIDs.isEmpty else {
+                throw ContextPackExportError.missingCanonicalEvidence(missingEvidenceClaimIDs)
+            }
+            guard workspace.selectedPOCHasBuildReadyEvidence else {
+                throw ContextPackExportError.handoffNotReady
+            }
+        }
+
         func sourceEvidenceIDs(for claimID: String) -> [String] {
-            workspace.claimEvidenceIDsByID[claimID]
-                ?? workspace.claimProvenanceByID[claimID]?.evidenceIDs
+            if let canonical = canonicalEvidenceIDsByClaimID[claimID], !canonical.isEmpty {
+                return canonical
+            }
+            guard !approved else { return [] }
+            return workspace.claimProvenanceByID[claimID]?.evidenceIDs
                 ?? ["evidence-\(claimID)"]
         }
 
@@ -381,9 +401,7 @@ struct ContextPackExporter {
                     relatedEntityID: $0.relatedEntityID,
                     evidence: .init(
                         id: "evidence-link-\($0.id)",
-                        sourceEvidenceIDs: workspace.claimEvidenceIDsByID[$0.id]
-                            ?? workspace.claimProvenanceByID[$0.id]?.evidenceIDs
-                            ?? ["evidence-\($0.id)"],
+                        sourceEvidenceIDs: sourceEvidenceIDs(for: $0.id),
                         speaker: $0.speakerName,
                         timestamp: $0.timestamp,
                         excerpt: Self.boundedEvidenceExcerpt($0.evidenceQuote)

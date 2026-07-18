@@ -18,8 +18,22 @@ SQLite library.
 - the exact `CanonicalJSON` envelope bytes are stored for audit and hashing;
 - a separate sorted Codable blob hydrates the Swift type, after which the store
   recomputes and byte-compares the canonical envelope;
-- every stream read verifies envelope integrity, sequence, predecessor hashes,
-  and the complete `ScoutGraphReducer` replay;
+- the first stream read verifies envelope integrity, sequence, predecessor
+  hashes, and the complete `ScoutGraphReducer` replay; subsequent same-process
+  reads reuse a verified snapshot while SQLite `PRAGMA data_version` invalidates
+  it after another connection commits;
+- verified snapshots are aggregate-LRU bounded to 8 streams, 8,192 events, and
+  a conservative 64 MiB retained-byte proxy; the proxy charges fixed snapshot
+  and event overhead plus twice the canonical and hydration byte counts already
+  produced during verification or insert, without re-encoding cache entries;
+- a snapshot that cannot fit by itself is returned to its caller after normal
+  verification but is not cached; cache diagnostics expose current stream,
+  event, and estimated-byte gauges plus eviction and rejection counters;
+- every append still rechecks the canonical stream head inside its
+  `BEGIN IMMEDIATE` transaction, builds candidate snapshots privately, and
+  publishes them only after `COMMIT` succeeds;
+- explicit `verifyChain` calls always bypass the cache and refresh it only when
+  the SQLite generation remains stable;
 - read models are never persisted as authority and remain rebuildable.
 
 ScoutCore currently exposes `InMemoryEventStore` as a concrete actor rather

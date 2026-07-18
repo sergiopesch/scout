@@ -1,4 +1,4 @@
-import { loadContextPackApprovalOptions, loadContextPackDirectory } from "./config.js";
+import { dataRoot, loadContextPackApprovalOptions, loadContextPackDirectory } from "./config.js";
 import { ContextPackStore } from "./context-packs.js";
 import { runScoutMcpStdio } from "./mcp.js";
 
@@ -6,6 +6,7 @@ async function main(): Promise<void> {
   await runScoutMcpStdio(new ContextPackStore(
     loadContextPackDirectory(),
     loadContextPackApprovalOptions(),
+    dataRoot,
   ));
 }
 

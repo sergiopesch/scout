@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -63,6 +63,29 @@ test("ContextPackStore writes immutable, body-hash-verified artifacts idempotent
       return true;
     },
   );
+});
+
+test("ContextPackStore rejects symlinked roots and restores owner-only directory permissions", async (context) => {
+  const boundary = await mkdtemp(join(tmpdir(), "scout-context-boundary-"));
+  const outside = await mkdtemp(join(tmpdir(), "scout-context-outside-"));
+  context.after(() => rm(boundary, { recursive: true, force: true }));
+  context.after(() => rm(outside, { recursive: true, force: true }));
+
+  const linkedRoot = join(boundary, "linked-context-packs");
+  await symlink(outside, linkedRoot, "dir");
+  const linkedStore = new ContextPackStore(linkedRoot, TEST_APPROVAL_OPTIONS, boundary);
+  await assert.rejects(() => linkedStore.list(), (error: unknown) => {
+    assert.ok(error instanceof PublicError);
+    assert.equal(error.code, "context_pack_store_unavailable");
+    return true;
+  });
+
+  const ownedRoot = join(boundary, "owned-context-packs");
+  await mkdir(ownedRoot, { mode: 0o777 });
+  await chmod(ownedRoot, 0o777);
+  const ownedStore = new ContextPackStore(ownedRoot, TEST_APPROVAL_OPTIONS, boundary);
+  assert.deepEqual(await ownedStore.list(), []);
+  assert.equal((await stat(ownedRoot)).mode & 0o777, 0o700);
 });
 
 test("ContextPackStore rejects mismatched hashes and forbidden raw material", async (context) => {

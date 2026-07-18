@@ -49,38 +49,22 @@ struct ClaimProjectionCommitPlanner {
     ) throws -> ClaimProjectionCommitPlan {
         try validateBoundary(boundaryEvent, modelCall: projection.modelCall, state: state)
 
-        let receipt = try makeReceipt(for: projection.modelCall, boundaryEvent: boundaryEvent)
-        let modelCallEventID = try eventID(
-            prefix: "event-model-call",
-            canonical: receipt.canonicalValue
-        )
+        let baseReceipt = try makeReceipt(for: projection.modelCall, boundaryEvent: boundaryEvent)
 
-        if let existing = state.modelCallReceipts[receipt.id] {
-            guard existing == receipt else {
-                throw ClaimProjectionCommitPlanningError.conflictingModelReceipt(receipt.id)
-            }
-            return ClaimProjectionCommitPlan(
-                modelCallEventID: modelCallEventID,
-                modelCallReceipt: receipt,
-                shouldRecordModelCall: false,
-                derivedEvents: []
-            )
+        // A reduced state cannot prove that a repeated adapter output is exact: it no longer
+        // contains the projection-base prefix or the ordered persisted envelopes. Retry
+        // verification therefore belongs to LiveEventJournal, which replays that exact prefix
+        // and compares a freshly generated plan with the completed canonical batch.
+        if state.modelCallReceipts[baseReceipt.id] != nil {
+            throw ClaimProjectionCommitPlanningError.conflictingModelReceipt(baseReceipt.id)
         }
 
-        if let existing = state.modelCallReceipts.values.first(where: {
+        if state.modelCallReceipts.values.contains(where: {
             $0.provider.rawValue == "openai"
                 && $0.providerResponseID.rawValue == projection.modelCall.responseID
         }) {
-            guard hasSameProviderResponse(existing, receipt) else {
-                throw ClaimProjectionCommitPlanningError.conflictingModelResponse(
-                    projection.modelCall.responseID
-                )
-            }
-            return ClaimProjectionCommitPlan(
-                modelCallEventID: modelCallEventID,
-                modelCallReceipt: receipt,
-                shouldRecordModelCall: false,
-                derivedEvents: []
+            throw ClaimProjectionCommitPlanningError.conflictingModelResponse(
+                projection.modelCall.responseID
             )
         }
 
@@ -124,7 +108,7 @@ struct ClaimProjectionCommitPlanner {
             coreEntitiesByProjectionID[entity.id] = coreEntity
             let payload = ScoutEventPayload.entityUpserted(coreEntity)
             try derived.append(ClaimProjectionPlannedEvent(
-                id: derivedEventID(receipt: receipt, payload: payload),
+                id: derivedEventID(receipt: baseReceipt, payload: payload),
                 payload: payload
             ))
         }
@@ -227,7 +211,7 @@ struct ClaimProjectionCommitPlanner {
             )
             let payload = ScoutEventPayload.claimProposed(coreClaim)
             try derived.append(ClaimProjectionPlannedEvent(
-                id: derivedEventID(receipt: receipt, payload: payload),
+                id: derivedEventID(receipt: baseReceipt, payload: payload),
                 payload: payload
             ))
             committedClaimIDByProjectionID[projectedClaim.id] = coreClaim.id
@@ -288,11 +272,39 @@ struct ClaimProjectionCommitPlanner {
             )
             let payload = ScoutEventPayload.relationshipUpserted(coreRelationship)
             try derived.append(ClaimProjectionPlannedEvent(
-                id: derivedEventID(receipt: receipt, payload: payload),
+                id: derivedEventID(receipt: baseReceipt, payload: payload),
                 payload: payload
             ))
         }
 
+        guard let projectionBaseID = state.lastEventID,
+              let projectionBase = state.eventBoundaries[projectionBaseID]
+        else {
+            throw ClaimProjectionCommitPlanningError.stateTransitionRejected(
+                "missing-projection-base"
+            )
+        }
+        let manifest: DerivedEventManifest
+        let receipt: ModelCallReceipt
+        do {
+            manifest = try DerivedEventManifest.committing(
+                adapterID: NonEmptyString(validating: "scout-macos-claim-projection"),
+                adapterVersion: NonEmptyString(validating: "claim-projection.v1"),
+                projectionBase: projectionBase,
+                receiptID: baseReceipt.id,
+                outputHash: baseReceipt.outputHash,
+                entries: derived.map {
+                    DerivedEventManifestEntry(eventID: $0.id, payload: $0.payload)
+                }
+            )
+            receipt = try self.receipt(baseReceipt, attaching: manifest)
+        } catch {
+            throw ClaimProjectionCommitPlanningError.invalidCoreValue(String(reflecting: error))
+        }
+        let modelCallEventID = try eventID(
+            prefix: "event-model-call",
+            canonical: receipt.canonicalValue
+        )
         let commitPlan = ClaimProjectionCommitPlan(
             modelCallEventID: modelCallEventID,
             modelCallReceipt: receipt,
@@ -683,21 +695,6 @@ struct ClaimProjectionCommitPlanner {
         )
     }
 
-    private func hasSameProviderResponse(
-        _ lhs: ModelCallReceipt,
-        _ rhs: ModelCallReceipt
-    ) -> Bool {
-        lhs.provider == rhs.provider
-            && lhs.providerResponseID == rhs.providerResponseID
-            && lhs.purpose == rhs.purpose
-            && lhs.inputBoundary == rhs.inputBoundary
-            && lhs.promptVersion == rhs.promptVersion
-            && lhs.outputSchemaVersion == rhs.outputSchemaVersion
-            && lhs.model == rhs.model
-            && lhs.outputHash == rhs.outputHash
-            && lhs.metadata == rhs.metadata
-    }
-
     private func validateAtomically(
         _ plan: ClaimProjectionCommitPlan,
         boundaryEvent: ScoutEventEnvelope,
@@ -713,36 +710,52 @@ struct ClaimProjectionCommitPlanner {
                 nextSequence: lastSequence.successor(),
                 previousHash: state.lastEventHash
             )
-            let actor = try EventActor.model(ModelIdentity(
+            let modelIdentity = try ModelIdentity(
                 provider: NonEmptyString(validating: "openai"),
                 model: NonEmptyString(validating: plan.modelCallReceipt.model.rawValue),
                 operationVersion: NonEmptyString(validating: plan.modelCallReceipt.promptVersion.rawValue)
-            ))
+            )
+            let validator = try NonEmptyString(validating: "scout-macos-claim-projection-validator")
             let timestamp = boundaryEvent.recordedAt
 
             let receiptEvent = try chain.seal(
                 id: plan.modelCallEventID,
                 occurredAt: timestamp,
                 recordedAt: timestamp,
-                actor: actor,
                 causationID: boundaryEvent.id,
-                payload: .modelCallRecorded(plan.modelCallReceipt)
+                command: .modelProjection(
+                    validator: validator,
+                    model: modelIdentity,
+                    operation: .recordCall(plan.modelCallReceipt)
+                )
             )
             next = try ScoutGraphReducer.reduce(next, event: receiptEvent)
 
             for planned in plan.derivedEvents {
+                let operation: ModelProjectionCommand = switch planned.payload {
+                case let .entityUpserted(entity): .upsertEntity(entity)
+                case let .claimProposed(claim): .proposeClaim(claim)
+                case let .relationshipUpserted(relationship): .upsertRelationship(relationship)
+                default:
+                    throw ClaimProjectionCommitPlanningError.stateTransitionRejected(
+                        "unsupported-model-command:\(planned.payload.kind)"
+                    )
+                }
                 let event = try chain.seal(
                     id: planned.id,
                     occurredAt: timestamp,
                     recordedAt: timestamp,
-                    actor: actor,
                     correlationID: plan.modelCallEventID,
                     causationID: plan.modelCallEventID,
-                    payload: planned.payload
+                    command: .modelProjection(
+                        validator: validator,
+                        model: modelIdentity,
+                        operation: operation
+                    )
                 )
                 next = try ScoutGraphReducer.reduce(next, event: event)
             }
-            _ = next
+            try ScoutGraphReducer.validateBatchTerminal(next)
         } catch let error as ClaimProjectionCommitPlanningError {
             throw error
         } catch {
@@ -750,5 +763,24 @@ struct ClaimProjectionCommitPlanner {
                 String(reflecting: error)
             )
         }
+    }
+
+    private func receipt(
+        _ base: ModelCallReceipt,
+        attaching manifest: DerivedEventManifest
+    ) throws -> ModelCallReceipt {
+        try ModelCallReceipt(
+            id: base.id,
+            provider: base.provider,
+            providerResponseID: base.providerResponseID,
+            purpose: base.purpose,
+            inputBoundary: base.inputBoundary,
+            promptVersion: base.promptVersion,
+            outputSchemaVersion: base.outputSchemaVersion,
+            model: base.model,
+            outputHash: base.outputHash,
+            derivedEventManifest: manifest,
+            metadata: base.metadata
+        )
     }
 }

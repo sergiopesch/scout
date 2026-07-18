@@ -5,7 +5,6 @@
   "author": {
     "name": "Scout"
   },
-  "license": "MIT",
   "keywords": ["discovery", "forward-deployed", "evidence", "architecture", "codex"],
   "skills": "./skills/",
   "interface": {

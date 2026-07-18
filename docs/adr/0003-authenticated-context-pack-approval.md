@@ -14,12 +14,14 @@ Scout stages immutable encoded bytes for exactly one selected POC dependency clo
 reviews its content digest, journal head, revision, and previous pack head. The Gateway approval route
 requires an independent per-launch token and mints an HMAC binding over exact content, scope, lineage,
 identity, revision, and approval time. Approved reads revalidate the binding. Keychain owns a rotatable
-active signer plus retained verification keys.
+active signer plus retained compatibility keys used by the implementation for verification.
 
 ## Consequences
 
 - Workspace changes after staging cannot expand an approved pack.
 - Ordinary Gateway bearers cannot assert approval.
 - Rotation preserves old immutable packs until a key is deliberately retired.
+- HMAC does not provide signer/verifier separation: any process holding a retained key can also create
+  a signature. An asymmetric successor is required before MCP can be genuinely verification-only.
 - Raw audio, unrestricted transcripts, source images, secrets, open questions, and unrelated records
   remain outside the Codex boundary by default.

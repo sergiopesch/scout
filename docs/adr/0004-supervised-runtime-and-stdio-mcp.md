@@ -20,7 +20,8 @@ inside-out and notarization fails closed.
 ## Consequences
 
 - Gateway/UI lifecycle is supervised as one unit.
-- The package must carry the matching Node license and dependency SBOM.
+- The package must carry the matching Node license, complete Gateway dependency licenses/notices, and
+  a build-specific dependency SBOM.
 - Node JIT requires its narrowly scoped hardened-runtime entitlement.
 - Development and ad-hoc Keychain stores are explicitly provisioned; differently signed binaries do
   not silently inherit secrets.
