@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PublicError } from "../src/errors.js";
-import { sanitizeRealtimeClientEvent } from "../src/realtime-proxy.js";
+import { realtimeUpstreamURL, sanitizeRealtimeClientEvent } from "../src/realtime-proxy.js";
+
+test("transcription sessions use the provider intent route, not a transcription model as the session model", () => {
+  const url = realtimeUpstreamURL({ openAIBaseURL: "https://api.openai.com/v1" });
+
+  assert.equal(url.toString(), "wss://api.openai.com/v1/realtime?intent=transcription");
+  assert.equal(url.searchParams.get("model"), null);
+});
 
 test("session updates are constrained to Scout transcription settings", () => {
   const result = JSON.parse(sanitizeRealtimeClientEvent(JSON.stringify({
@@ -19,6 +26,7 @@ test("session updates are constrained to Scout transcription settings", () => {
 
   assert.equal(result.session.audio.input.transcription.model, "gpt-4o-mini-transcribe");
   assert.equal(result.session.audio.input.transcription.language, "en");
+  assert.equal(result.session.audio.input.transcription.delay, undefined);
   assert.equal(result.session.audio.input.turn_detection, null);
   assert.equal(result.session.audio.input.noise_reduction.type, "far_field");
 });

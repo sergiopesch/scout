@@ -51,13 +51,15 @@ function waitForGateway(gateway, timeoutMs = 15_000) {
         process.stderr.write(`${line}\n`);
         return;
       }
-      cleanup();
+      // Keep forwarding bounded Gateway diagnostics after readiness. Provider
+      // failures otherwise disappear while the supervised child stays alive.
+      cleanup(true);
       resolve(address);
     };
-    const cleanup = () => {
+    const cleanup = (keepReading = false) => {
       clearTimeout(timeout);
       gateway.off("exit", onExit);
-      lines.off("line", onLine);
+      if (!keepReading) lines.off("line", onLine);
     };
     gateway.once("exit", onExit);
     lines.on("line", onLine);

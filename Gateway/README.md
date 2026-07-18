@@ -26,7 +26,8 @@ Supported configuration:
 
 - `OPENAI_API_KEY` — required in the Gateway process; loaded from Keychain by the native launcher.
 - `OPENAI_BASE_URL` — defaults to `https://api.openai.com/v1`; non-loopback HTTP is rejected.
-- `OPENAI_REALTIME_MODEL` — defaults to `gpt-4o-mini-transcribe`.
+- `OPENAI_REALTIME_MODEL` — transcription model inside the Realtime transcription session; defaults
+  to `gpt-4o-mini-transcribe`. It is never used as the top-level Realtime session model.
 - `OPENAI_DIARIZATION_MODEL` — defaults to `gpt-4o-transcribe-diarize`.
 - `OPENAI_CLAIMS_MODEL` — defaults to the access-specific `gpt-5.6-luna` configuration exercised by
   the recorded packaged live smoke. Release operators must verify that exact model in the target OpenAI
@@ -46,7 +47,9 @@ Supported configuration:
 ## Boundaries
 
 - `GET /health` is the only unauthenticated route. A supervised instance also returns its per-launch identity so the native app can authenticate the peer before sending a bearer or customer data.
-- `WS /realtime` proxies only transcription session updates and input-audio-buffer events. It enforces 24 kHz mono PCM, the server-selected model, bounded frames, backpressure, and a 59-minute lifetime.
+- `WS /realtime` opens the provider's explicit transcription-intent session and proxies only
+  transcription session updates and input-audio-buffer events. It enforces 24 kHz mono PCM, the
+  server-selected transcription model, bounded frames, backpressure, and a 59-minute lifetime.
 - `POST /v1/transcriptions/diarize` accepts only Scout's canonical mono 24 kHz PCM16 WAV, proves its
   RIFF/chunk/frame/duration structure within a one-minute decompression budget before the provider
   call, and returns a bounded diarization proposal. It always uses `diarized_json` and `chunking_strategy=auto`.

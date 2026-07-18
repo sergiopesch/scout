@@ -10,6 +10,30 @@ final class RealtimeTranscriptionClientTests: XCTestCase {
         )
     }
 
+    func testRealtimeHandshakeWaitsForTranscriptionSessionAcceptance() throws {
+        let created = try JSONSerialization.data(withJSONObject: [
+            "type": "session.created",
+            "session": ["type": "transcription"]
+        ])
+        let accepted = try JSONSerialization.data(withJSONObject: [
+            "type": "session.updated",
+            "session": ["type": "transcription"]
+        ])
+        let wrongSession = try JSONSerialization.data(withJSONObject: [
+            "type": "session.updated",
+            "session": ["type": "realtime"]
+        ])
+        let rejected = try JSONSerialization.data(withJSONObject: [
+            "type": "error",
+            "error": ["code": "invalid_value"]
+        ])
+
+        XCTAssertEqual(RealtimeSessionHandshake.disposition(for: created), .awaitingAcceptance)
+        XCTAssertEqual(RealtimeSessionHandshake.disposition(for: accepted), .accepted)
+        XCTAssertEqual(RealtimeSessionHandshake.disposition(for: wrongSession), .rejected)
+        XCTAssertEqual(RealtimeSessionHandshake.disposition(for: rejected), .rejected)
+    }
+
     func testCaptureAccumulatorPreservesExactFrameSpanAndPCMDuration() throws {
         var accumulator = RealtimeAudioCaptureAccumulator()
 

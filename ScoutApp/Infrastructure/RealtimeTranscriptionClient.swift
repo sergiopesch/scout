@@ -25,6 +25,32 @@ enum RealtimeTranscriptEvent: Equatable, Sendable {
     case disconnected
 }
 
+enum RealtimeSessionHandshakeDisposition: Equatable, Sendable {
+    case awaitingAcceptance
+    case accepted
+    case rejected
+}
+
+enum RealtimeSessionHandshake {
+    static func disposition(for data: Data) -> RealtimeSessionHandshakeDisposition {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = object["type"] as? String
+        else { return .awaitingAcceptance }
+
+        switch type {
+        case "session.updated":
+            guard let session = object["session"] as? [String: Any],
+                  session["type"] as? String == "transcription"
+            else { return .rejected }
+            return .accepted
+        case "error":
+            return .rejected
+        default:
+            return .awaitingAcceptance
+        }
+    }
+}
+
 enum RealtimeTranscriptionError: LocalizedError, Equatable, Sendable {
     case alreadyConnected
     case notConnected
@@ -164,7 +190,6 @@ actor RealtimeTranscriptionClient {
                     struct Transcription: Encodable {
                         let model = RealtimeTranscriptionClient.productionTranscriptionModel
                         let language: String?
-                        let delay = "low"
                     }
                 }
             }
@@ -227,6 +252,18 @@ actor RealtimeTranscriptionClient {
             type: "session.update",
             session: .init(audio: .init(input: input))
         ))
+
+        do {
+            try await Self.awaitSessionAcceptance(on: task)
+        } catch is CancellationError {
+            task.cancel(with: .goingAway, reason: nil)
+            socket = nil
+            throw CancellationError()
+        } catch {
+            task.cancel(with: .goingAway, reason: nil)
+            socket = nil
+            throw RealtimeTranscriptionError.bridgeRejectedConnection
+        }
 
         streamContinuation?.yield(.connected)
         receiveTask = Task { [weak self] in
@@ -337,6 +374,43 @@ actor RealtimeTranscriptionClient {
             throw RealtimeTranscriptionError.bridgeRejectedConnection
         }
         try await socket.send(.string(text))
+    }
+
+    private nonisolated static func awaitSessionAcceptance(
+        on socket: URLSessionWebSocketTask
+    ) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                while !Task.isCancelled {
+                    let message = try await socket.receive()
+                    let data: Data
+                    switch message {
+                    case let .data(value): data = value
+                    case let .string(value): data = Data(value.utf8)
+                    @unknown default: continue
+                    }
+
+                    switch RealtimeSessionHandshake.disposition(for: data) {
+                    case .awaitingAcceptance:
+                        continue
+                    case .accepted:
+                        return
+                    case .rejected:
+                        throw RealtimeTranscriptionError.bridgeRejectedConnection
+                    }
+                }
+                throw CancellationError()
+            }
+            group.addTask {
+                try await ContinuousClock().sleep(for: .seconds(10))
+                throw RealtimeTranscriptionError.bridgeRejectedConnection
+            }
+
+            defer { group.cancelAll() }
+            guard let _ = try await group.next() else {
+                throw RealtimeTranscriptionError.bridgeRejectedConnection
+            }
+        }
     }
 
     private func receiveLoop(socket: URLSessionWebSocketTask) async {

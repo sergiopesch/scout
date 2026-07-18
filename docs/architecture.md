@@ -193,7 +193,9 @@ flowchart TB
 
 ## OpenAI allocation
 
-- **Realtime transcription:** `gpt-4o-mini-transcribe` for the low-latency provisional text stream. Scout performs local segmentation and reconciles completions by stable item ID.
+- **Realtime transcription:** the Gateway opens the provider's transcription-intent Realtime session,
+  then configures `gpt-4o-mini-transcribe` under `audio.input.transcription` for the low-latency
+  provisional text stream. Scout performs local segmentation and reconciles completions by stable item ID.
 - **Diarization:** `gpt-4o-transcribe-diarize` through `/v1/audio/transcriptions`, producing speaker-labelled finalized segments. It refines history through appended revisions.
 - **Claims:** Responses API Structured Outputs with a strict JSON Schema. A deterministic validator owns foreign keys, evidence spans, enums, and idempotency. The current default claims model is account-specific and must be verified in the target OpenAI project before release.
 - **Images:** one explicitly selected JPEG, PNG, HEIC, or HEIF source is decoded under byte, frame, dimension, pixel, and memory bounds; orientation is applied and metadata-bearing JPEG segments are removed. The Gateway rechecks the normalized byte hash and dimensions before a non-persistent Responses vision call. Entities, relationships, and notes are shown only as evidence-linked proposal cards; the current build has no path that promotes them into graph state.

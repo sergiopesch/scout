@@ -91,7 +91,6 @@ export function sanitizeRealtimeClientEvent(raw: RawData | string, model: string
             format: { type: "audio/pcm", rate: 24_000 },
             transcription: {
               model,
-              delay: transcription.delay ?? "low",
               ...(transcription.language ? { language: transcription.language } : {}),
             },
             noise_reduction: { type: "far_field" },
@@ -105,12 +104,17 @@ export function sanitizeRealtimeClientEvent(raw: RawData | string, model: string
   throw new PublicError(400, "realtime_event_not_allowed", "Realtime event type is not allowed");
 }
 
-function upstreamURL(config: GatewayConfig): URL {
+export function realtimeUpstreamURL(
+  config: Pick<GatewayConfig, "openAIBaseURL">,
+): URL {
   const url = new URL(config.openAIBaseURL);
   url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
   url.pathname = `${url.pathname.replace(/\/$/, "")}/realtime`;
   url.search = "";
-  url.searchParams.set("model", config.realtimeModel);
+  // A transcription model configures audio.input.transcription inside the
+  // session. It is not a top-level Realtime model. The explicit intent makes
+  // OpenAI create a transcription session before Scout sends session.update.
+  url.searchParams.set("intent", "transcription");
   return url;
 }
 
@@ -122,7 +126,7 @@ function defaultSessionUpdate(model: string): string {
       audio: {
         input: {
           format: { type: "audio/pcm", rate: 24_000 },
-          transcription: { model, delay: "low" },
+          transcription: { model },
           noise_reduction: { type: "far_field" },
           turn_detection: null,
         },
@@ -186,7 +190,7 @@ export function attachRealtimeProxy(server: HTTPServer, config: GatewayConfig): 
     const pending: string[] = [];
     let pendingBytes = 0;
 
-    const upstream = new WebSocket(upstreamURL(config), {
+    const upstream = new WebSocket(realtimeUpstreamURL(config), {
       headers: { Authorization: `Bearer ${config.apiKey}` },
       handshakeTimeout: 15_000,
       maxPayload: 2 * 1024 * 1024,
@@ -254,13 +258,34 @@ export function attachRealtimeProxy(server: HTTPServer, config: GatewayConfig): 
     });
     upstream.on("message", (data, isBinary) => {
       if (client.readyState !== WebSocket.OPEN) return;
+      if (!isBinary) {
+        try {
+          const event = JSON.parse(data.toString("utf8")) as {
+            type?: unknown;
+            error?: { code?: unknown; param?: unknown };
+          };
+          if (event.type === "error") {
+            console.error(JSON.stringify({
+              event: "realtime_provider_event_error",
+              code: typeof event.error?.code === "string" ? event.error.code.slice(0, 128) : "unknown",
+              param: typeof event.error?.param === "string" ? event.error.param.slice(0, 128) : null,
+            }));
+          }
+        } catch {
+          // The provider frame is still forwarded; diagnostics never alter it.
+        }
+      }
       if (client.bufferedAmount > MAX_BUFFERED_BYTES) {
         client.close(1013, "client_backpressure");
         return;
       }
       client.send(data, { binary: isBinary });
     });
-    upstream.on("error", () => {
+    upstream.on("error", (error) => {
+      console.error(JSON.stringify({
+        event: "realtime_upstream_error",
+        message: error.message.replace(/[\r\n\t]/gu, " ").slice(0, 256),
+      }));
       if (client.readyState === WebSocket.OPEN) {
         client.send(JSON.stringify({
           type: "error",
@@ -268,7 +293,14 @@ export function attachRealtimeProxy(server: HTTPServer, config: GatewayConfig): 
         }));
       }
     });
-    upstream.on("close", () => {
+    upstream.on("close", (code, reason) => {
+      if (code !== 1000) {
+        console.error(JSON.stringify({
+          event: "realtime_upstream_closed",
+          code,
+          reason: reason.toString("utf8").replace(/[\r\n\t]/gu, " ").slice(0, 128),
+        }));
+      }
       if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
         client.close(1012, "provider_disconnected");
       }
