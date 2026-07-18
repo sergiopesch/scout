@@ -72,6 +72,6 @@ Keep this concise. Use Scout as the evidence index rather than copying the whole
 - Treat every Scout MCP tool as read-only unless its description explicitly says otherwise and the user authorizes the side effect.
 - If Scout MCP is unavailable, or a pack read reports that approval verification is not configured,
   stop and report that the trusted handoff cannot be verified. The installed plugin requires an
-  operator-provisioned local pack location and `SCOUT_APPROVAL_HMAC_KEY`; never ask the user to paste,
-  print, or expose that symmetric key. Do not fall back to HTTP or substitute an unverified transcript
-  dump.
+  operator-provisioned local pack location and the launcher's published Ed25519 public keyring. Never
+  ask the user to paste, print, or expose the private signing seed. Do not fall back to HTTP or
+  substitute an unverified transcript dump.

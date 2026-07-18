@@ -22,8 +22,9 @@ The current verified suite counts are:
 | --- | ---: |
 | ScoutCore | 80 across 9 suites |
 | ScoutPersistence | 21 |
-| Gateway | 28 |
-| Launcher JavaScript | 7 |
+| Gateway | 32 |
+| Launcher JavaScript | 10 |
+| Evaluation JavaScript | 4 plus one synthetic contract run |
 | Launcher native security-policy harness | 4 cases |
 | macOS Scout app | 123 |
 
@@ -60,7 +61,7 @@ reportable vulnerability (scan `3369901f-5cec-4484-906c-634a6e44ff41`).
 The standalone `Plugins/scout` archive passed the Codex plugin validator and an archive-shaped MCP
 startup test. The MCP bundle, exact nine-component CycloneDX SBOM, third-party notices, and archive
 licence were generated twice with identical hashes. The normalized MCP bundle SHA-256 is
-`eea34aa29ce4242c9173aac12564f9f37c5069a25bb30c0e79a95f9307790a0f`.
+`2e1c4dee696baf36689a5b83422afe6d927f71e38ea95b97525c82add20be3e9`.
 
 The 15-slide HTML presentation was exercised in the in-app browser at desktop and compact viewport
 sizes. Slide navigation, Home/End keys, overview, notes, Escape/focus return, the discovery replay,
@@ -82,9 +83,6 @@ the target OpenAI project before packaging.
 
 ## Manual and external gates still required
 
-- Replace the approval HMAC with asymmetric signatures so MCP holds verification-only public keys.
-- Decode/probe uploaded audio under explicit codec, channel, frame, duration, and decompression
-  limits; current Gateway validation is multipart/extension/byte bounded.
 - Build and provision a fresh package, then run offline and live packaged smoke against that exact
   artifact.
 - Sign with Developer ID, notarize, staple, validate Gatekeeper, and install on a clean Mac.
@@ -94,7 +92,8 @@ the target OpenAI project before packaging.
   review. Automated render smoke is not a substitute.
 - Approve retention/deletion, jurisdiction, enterprise-context licensing, and public distribution
   policy with the accountable legal/security owners.
-- Build and version a consented, de-identified golden audio/image corpus for model-quality evaluation.
+- Complete, review, and run the first consented, de-identified golden manifest against privately held
+  audio/image media. The versioned scorer and synthetic contract corpus are implemented.
 
 See [Product readiness](product-readiness.md), [Evaluation gates](evaluation.md), and
 [Release and notarization](release.md) for the remaining acceptance boundary.

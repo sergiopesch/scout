@@ -13,6 +13,10 @@ All notable Scout milestones are recorded here. Dates use ISO 8601.
   bounded image observations.
 - Immutable selected-POC context packs, Gateway HMAC approval, revision lineage, and read-only stdio
   MCP handoff to Codex.
+- Replaced the initial HMAC approval format with Ed25519: only the Gateway receives the active private
+  seed, while the standalone MCP consumes a versioned public-only verification keyring.
+- Added exact mono 24 kHz PCM16 WAV admission before diarization and a versioned, privacy-safe golden
+  evaluation harness with deterministic release thresholds and synthetic contract fixtures.
 - Device-local Keychain migration, approval-key rotation with retained verification keys, and
   per-package Keychain namespaces.
 - Portable outer launcher app with embedded self-contained Node/Gateway runtime, sandboxed nested UI,
@@ -23,6 +27,8 @@ All notable Scout milestones are recorded here. Dates use ISO 8601.
   palette, exact Scout-window lifecycle controls, and dedicated transcript, evidence, action-pack,
   and controller scenes. Screen observation and Accessibility control remain separate, explicit
   opt-in capabilities and are not required to operate Scout-owned surfaces.
+- Refined the shell to the original porcelain-and-graphite logo palette, removed idle and duplicate
+  controls, made empty-state controls conditional, and defaulted the evidence inspector closed.
 - Bounded verified SQLite replay snapshots with cross-process `data_version` invalidation and
   transactional head rechecks. An aggregate LRU caps snapshots at 8 streams, 8,192 events, and a
   conservative 64 MiB retained-byte proxy. The deterministic persistence workload reduced full graph
@@ -47,6 +53,8 @@ All notable Scout milestones are recorded here. Dates use ISO 8601.
 - Closed launcher child environments, authenticated every secret mutation/export used by development,
   removed plaintext import/export from production launchers, and made Gateway/UI exit supervision
   bidirectional.
+- Added fail-closed per-developer Apple Development signing setup so rebuilt apps retain a stable
+  Keychain identity, with Personal Team support, diagnostics, regression tests, and builder onboarding.
 
 ### Security
 

@@ -3,25 +3,13 @@ import SwiftUI
 struct TrustInspectorView: View {
     let workspace: ScoutWorkspace
     var compact = true
+    @State private var showsTechnicalDetails = false
 
     var body: some View {
         let selectedClaim = workspace.selectedClaim
         let canonicalEvidenceIDs = workspace.selectedClaimCanonicalEvidenceIDs
 
         VStack(spacing: 0) {
-            ScoutPanelHeader(eyebrow: "Trust layer", title: "Evidence inspector") {
-                canonicalEvidenceStatus(
-                    hasSelectedClaim: selectedClaim != nil,
-                    evidenceIDs: canonicalEvidenceIDs
-                )
-                .font(.system(size: 9, weight: .semibold))
-                .accessibilityIdentifier("scout.trustInspector.evidenceStatus")
-            }
-            .padding(.horizontal, ScoutSpacing.medium)
-            .padding(.vertical, 11)
-
-            Divider().overlay(ScoutColors.stroke)
-
             if let claim = selectedClaim {
                 ScrollView {
                     claimContent(claim, canonicalEvidenceIDs: canonicalEvidenceIDs)
@@ -38,28 +26,6 @@ struct TrustInspectorView: View {
         }
         .scoutPanel(emphasized: selectedClaim?.needsValidation == true)
         .accessibilityIdentifier("scout.trustInspector")
-    }
-
-    @ViewBuilder
-    private func canonicalEvidenceStatus(
-        hasSelectedClaim: Bool,
-        evidenceIDs: [String]
-    ) -> some View {
-        if !hasSelectedClaim {
-            Label("No claim selected", systemImage: "link")
-                .foregroundStyle(ScoutColors.secondaryText)
-        } else if evidenceIDs.isEmpty {
-            Label("Evidence unresolved", systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(ScoutColors.gold)
-        } else {
-            Label(
-                evidenceIDs.count == 1
-                    ? "1 canonical source"
-                    : "\(evidenceIDs.count) canonical sources",
-                systemImage: "link.badge.plus"
-            )
-            .foregroundStyle(ScoutColors.mint)
-        }
     }
 
     private func claimContent(
@@ -102,10 +68,6 @@ struct TrustInspectorView: View {
             }
 
             VStack(alignment: .leading, spacing: 7) {
-                Text("SOURCE UTTERANCE")
-                    .font(.system(size: 8, weight: .bold, design: .rounded))
-                    .tracking(0.9)
-                    .foregroundStyle(ScoutColors.secondaryText)
                 Text("“\(claim.evidenceQuote)”")
                     .font(.system(size: compact ? 10 : 12, weight: .medium))
                     .italic()
@@ -135,29 +97,21 @@ struct TrustInspectorView: View {
 
             if canonicalEvidenceIDs.isEmpty {
                 unresolvedEvidenceNotice
-            } else {
-                sourceChain
             }
 
-            if let provenance = workspace.claimProvenanceByID[claim.id] {
-                modelReceipt(provenance, canonicalEvidenceIDs: canonicalEvidenceIDs)
-            }
+            technicalDetails(claim, canonicalEvidenceIDs: canonicalEvidenceIDs)
 
             claimReviewControls(claim)
-
-            if !compact {
-                trustLegend
-            }
         }
         .accessibilityElement(children: .contain)
     }
 
     private var unresolvedEvidenceNotice: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Label("Canonical evidence unresolved", systemImage: "exclamationmark.triangle.fill")
+            Label("Source link unavailable", systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: 8, weight: .bold, design: .rounded))
                 .foregroundStyle(ScoutColors.gold)
-            Text("No immutable evidence ID resolves for this claim. Treat the excerpt as context only until canonical replay restores the link.")
+            Text("Treat this excerpt as context until canonical replay restores its immutable source.")
                 .font(.system(size: 8, weight: .medium))
                 .foregroundStyle(ScoutColors.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -177,17 +131,6 @@ struct TrustInspectorView: View {
     private func claimReviewControls(_ claim: TrustClaim) -> some View {
         let isReviewing = workspace.reviewingClaimIDs.contains(claim.id)
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
-                Text("CLAIM REVIEW")
-                    .font(.system(size: 8, weight: .bold, design: .rounded))
-                    .tracking(0.9)
-                    .foregroundStyle(ScoutColors.secondaryText)
-                Spacer()
-                Text(reviewStatusLabel(claim.reviewStatus))
-                    .font(.system(size: 7, weight: .bold, design: .rounded))
-                    .foregroundStyle(reviewStatusColor(claim.reviewStatus))
-            }
-
             if isReviewing {
                 HStack(spacing: 7) {
                     ProgressView()
@@ -223,7 +166,7 @@ struct TrustInspectorView: View {
                     }
 
                 case .legacyAccepted:
-                    Button("Re-authenticate acceptance") {
+                    Button("Re-authenticate") {
                         workspace.reattestClaimAcceptance(claim.id)
                     }
                     .buttonStyle(.borderedProminent)
@@ -233,9 +176,9 @@ struct TrustInspectorView: View {
                     .accessibilityIdentifier("scout.claim.reattest.\(claim.id)")
 
                 case .accepted:
-                    Text("Device-owner authentication is recorded in the canonical event history.")
+                    Label("Authenticated", systemImage: "checkmark.shield.fill")
                         .font(.system(size: 8, weight: .medium))
-                        .foregroundStyle(ScoutColors.secondaryText)
+                        .foregroundStyle(ScoutColors.mint)
                 }
             }
 
@@ -257,14 +200,6 @@ struct TrustInspectorView: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .stroke(reviewStatusColor(claim.reviewStatus).opacity(0.22), lineWidth: 1)
         )
-    }
-
-    private func reviewStatusLabel(_ status: ClaimReviewStatus) -> String {
-        switch status {
-        case .proposed: "AWAITING REVIEW"
-        case .accepted: "AUTHENTICATED ACCEPTANCE"
-        case .legacyAccepted: "LEGACY · RE-AUTH REQUIRED"
-        }
     }
 
     private func reviewStatusColor(_ status: ClaimReviewStatus) -> Color {
@@ -290,6 +225,29 @@ struct TrustInspectorView: View {
                 chainStep(symbol: "point.3.connected.trianglepath.dotted", label: "Graph")
             }
         }
+    }
+
+    private func technicalDetails(
+        _ claim: TrustClaim,
+        canonicalEvidenceIDs: [String]
+    ) -> some View {
+        DisclosureGroup(isExpanded: $showsTechnicalDetails) {
+            VStack(alignment: .leading, spacing: 12) {
+                if !canonicalEvidenceIDs.isEmpty {
+                    sourceChain
+                }
+                if let provenance = workspace.claimProvenanceByID[claim.id] {
+                    modelReceipt(provenance, canonicalEvidenceIDs: canonicalEvidenceIDs)
+                }
+            }
+            .padding(.top, 10)
+        } label: {
+            Label("Technical details", systemImage: "info.circle")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(ScoutColors.secondaryText)
+        }
+        .tint(ScoutColors.secondaryText)
+        .accessibilityIdentifier("scout.trustInspector.technicalDetails")
     }
 
     private func modelReceipt(
@@ -351,13 +309,6 @@ struct TrustInspectorView: View {
             .accessibilityHidden(true)
     }
 
-    private var trustLegend: some View {
-        HStack(spacing: 8) {
-            ForEach(EvidenceKind.allCases, id: \.self) { kind in
-                EvidenceBadge(kind: kind, compact: true)
-            }
-        }
-    }
 }
 
 private struct ConfidenceGauge: View {

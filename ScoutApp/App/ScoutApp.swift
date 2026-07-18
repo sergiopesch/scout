@@ -53,6 +53,7 @@ struct ScoutApp: App {
                 }
         }
         .defaultSize(width: 1_460, height: 900)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("Focus Scout Workspace") {

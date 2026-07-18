@@ -1,4 +1,12 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  randomUUID,
+  sign as signEd25519,
+  verify as verifyEd25519,
+  type KeyObject,
+} from "node:crypto";
 import { chmod, link, lstat, mkdir, open, readFile, readdir, realpath, unlink } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod/v4";
@@ -9,6 +17,8 @@ const MAX_COLLECTION_ITEMS = 20_000;
 const MAX_CONTEXT_PACK_FILES = 10_000;
 const Identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
 const SHA256 = z.string().regex(/^[a-f0-9]{64}$/);
+const Ed25519RawKey = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+const Ed25519Signature = z.string().regex(/^[A-Za-z0-9_-]{86}$/);
 const Timestamp = z.string().datetime({ offset: true });
 const DetailText = z.string().max(40_000);
 const BasisPoints = z.number().int().min(0).max(10_000);
@@ -152,7 +162,7 @@ export const ContextPackBodySchema = z.object({
 }).strict();
 
 const ApprovalBindingSchema = z.object({
-  algorithm: z.literal("hmac-sha256"),
+  algorithm: z.literal("ed25519"),
   key_id: Identifier,
   context_pack_id: Identifier,
   session_id: Identifier,
@@ -162,7 +172,7 @@ const ApprovalBindingSchema = z.object({
   content_sha256: SHA256,
   approved_scope_sha256: SHA256,
   approved_at: Timestamp,
-  tag: SHA256,
+  signature: Ed25519Signature,
 }).strict();
 
 export const ContextPackSchema = z.object({
@@ -177,40 +187,60 @@ export type ContextPack = z.infer<typeof ContextPackSchema>;
 export type ApprovalBinding = z.infer<typeof ApprovalBindingSchema>;
 
 export interface ContextPackApprovalOptions {
-  readonly key: string;
-  readonly keyID: string;
-  readonly verificationKeys?: Readonly<Record<string, string>>;
+  readonly signingKey?: {
+    readonly keyID: string;
+    readonly privateKey: string;
+  };
+  readonly verificationKeys: Readonly<Record<string, string>>;
 }
 
 export class ContextPackApprovalAuthority {
-  private readonly activeKey: Buffer;
-  private readonly verificationKeys: ReadonlyMap<string, Buffer>;
-  readonly keyID: string;
+  private readonly activeKey: KeyObject | undefined;
+  private readonly verificationKeys: ReadonlyMap<string, KeyObject>;
+  readonly keyID: string | undefined;
 
   constructor(options: ContextPackApprovalOptions) {
-    if (Buffer.byteLength(options.key, "utf8") < 32 || !Identifier.safeParse(options.keyID).success) {
-      throw new Error("Context-pack approval authority is invalid");
-    }
-    const keys = new Map<string, Buffer>();
-    for (const [keyID, key] of Object.entries(options.verificationKeys ?? {})) {
-      if (!Identifier.safeParse(keyID).success || Buffer.byteLength(key, "utf8") < 32) {
+    const keys = new Map<string, KeyObject>();
+    for (const [keyID, key] of Object.entries(options.verificationKeys)) {
+      if (!Identifier.safeParse(keyID).success || !Ed25519RawKey.safeParse(key).success) {
         throw new Error("Context-pack approval verification keyring is invalid");
       }
-      keys.set(keyID, Buffer.from(key, "utf8"));
+      keys.set(keyID, publicKeyFromRaw(key));
     }
-    this.activeKey = Buffer.from(options.key, "utf8");
-    keys.set(options.keyID, this.activeKey);
+    if (options.signingKey !== undefined) {
+      if (!Identifier.safeParse(options.signingKey.keyID).success
+        || !Ed25519RawKey.safeParse(options.signingKey.privateKey).success) {
+        throw new Error("Context-pack approval authority is invalid");
+      }
+      this.activeKey = privateKeyFromRaw(options.signingKey.privateKey);
+      this.keyID = options.signingKey.keyID;
+      const derivedPublic = rawPublicKey(this.activeKey);
+      const configuredPublic = options.verificationKeys[this.keyID];
+      if (configuredPublic !== undefined && configuredPublic !== derivedPublic) {
+        throw new Error("Context-pack approval signing key does not match its public key");
+      }
+      keys.set(this.keyID, publicKeyFromRaw(derivedPublic));
+    } else {
+      this.activeKey = undefined;
+      this.keyID = undefined;
+    }
     this.verificationKeys = keys;
-    this.keyID = options.keyID;
   }
 
   approve(pack: ContextPack): ContextPack {
+    if (this.activeKey === undefined || this.keyID === undefined) {
+      throw new PublicError(503, "context_pack_approval_unconfigured", "Context-pack signing is not configured");
+    }
     const binding = this.unsignedBinding(pack, this.keyID);
     return {
       ...pack,
       approval: {
         ...binding,
-        tag: this.tag(binding, this.activeKey),
+        signature: signEd25519(
+          null,
+          Buffer.from(canonicalJSONString(binding), "utf8"),
+          this.activeKey,
+        ).toString("base64url"),
       },
     };
   }
@@ -220,27 +250,27 @@ export class ContextPackApprovalAuthority {
     if (approval === undefined) return false;
     const key = this.verificationKeys.get(approval.key_id);
     if (key === undefined) return false;
-    let expected: Buffer;
-    let actual: Buffer;
     try {
-      expected = Buffer.from(this.tag(this.unsignedBinding(pack, approval.key_id), key), "hex");
-      actual = Buffer.from(approval.tag, "hex");
+      const unsigned = this.unsignedBinding(pack, approval.key_id);
+      return canonicalJSONString(approvalWithoutSignature(approval)) === canonicalJSONString(unsigned)
+        && verifyEd25519(
+          null,
+          Buffer.from(canonicalJSONString(unsigned), "utf8"),
+          key,
+          Buffer.from(approval.signature, "base64url"),
+        );
     } catch {
       return false;
     }
-    return expected.length === actual.length
-      && timingSafeEqual(expected, actual)
-      && canonicalJSONString(approvalWithoutTag(approval))
-        === canonicalJSONString(this.unsignedBinding(pack, approval.key_id));
   }
 
-  private unsignedBinding(pack: ContextPack, keyID: string): Omit<ApprovalBinding, "tag"> {
+  private unsignedBinding(pack: ContextPack, keyID: string): Omit<ApprovalBinding, "signature"> {
     const body = pack.body;
     if (body.approved_at === undefined || body.journal_head_sha256 === undefined) {
       throw new PublicError(422, "context_pack_approval_required", "Approved context pack lacks a canonical approval boundary");
     }
     return {
-      algorithm: "hmac-sha256",
+      algorithm: "ed25519",
       key_id: keyID,
       context_pack_id: body.context_pack_id,
       session_id: body.session_id,
@@ -255,16 +285,35 @@ export class ContextPackApprovalAuthority {
     };
   }
 
-  private tag(binding: Omit<ApprovalBinding, "tag">, key: Buffer): string {
-    return createHmac("sha256", key)
-      .update(canonicalJSONString(binding))
-      .digest("hex");
-  }
 }
 
-function approvalWithoutTag(binding: ApprovalBinding): Omit<ApprovalBinding, "tag"> {
-  const { tag: _tag, ...unsigned } = binding;
+function approvalWithoutSignature(binding: ApprovalBinding): Omit<ApprovalBinding, "signature"> {
+  const { signature: _signature, ...unsigned } = binding;
   return unsigned;
+}
+
+const ED25519_PRIVATE_DER_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
+const ED25519_PUBLIC_DER_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
+
+function privateKeyFromRaw(value: string): KeyObject {
+  return createPrivateKey({
+    key: Buffer.concat([ED25519_PRIVATE_DER_PREFIX, Buffer.from(value, "base64url")]),
+    format: "der",
+    type: "pkcs8",
+  });
+}
+
+function publicKeyFromRaw(value: string): KeyObject {
+  return createPublicKey({
+    key: Buffer.concat([ED25519_PUBLIC_DER_PREFIX, Buffer.from(value, "base64url")]),
+    format: "der",
+    type: "spki",
+  });
+}
+
+function rawPublicKey(privateKey: KeyObject): string {
+  const encoded = createPublicKey(privateKey).export({ format: "der", type: "spki" });
+  return encoded.subarray(ED25519_PUBLIC_DER_PREFIX.length).toString("base64url");
 }
 
 export interface ContextPackSummary {

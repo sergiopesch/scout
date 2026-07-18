@@ -58,6 +58,8 @@ async function compileSecretTool() {
     "Security",
     "-framework",
     "LocalAuthentication",
+    "-framework",
+    "CryptoKit",
     policySource,
     source,
     "-o",
@@ -86,8 +88,6 @@ try {
 
 const imported = {
   openAIAPIKey: valueFor(contents, "OPENAI_API_KEY"),
-  approvalKey: valueFor(contents, "SCOUT_APPROVAL_HMAC_KEY"),
-  approvalKeyID: valueFor(contents, "SCOUT_APPROVAL_KEY_ID"),
 };
 const statusJSON = await run(tool, ["secrets", "import"], {
   input: JSON.stringify(imported),
@@ -102,8 +102,10 @@ const secretNames = new Set([
   "SCOUT_GATEWAY_TOKEN",
   "SCOUT_APPROVAL_TOKEN",
   "SCOUT_APPROVAL_HMAC_KEY",
+  "SCOUT_APPROVAL_ED25519_PRIVATE_KEY",
   "SCOUT_APPROVAL_KEY_ID",
   "SCOUT_APPROVAL_VERIFICATION_KEYS",
+  "SCOUT_APPROVAL_PUBLIC_KEYS",
 ]);
 const sanitized = contents
   .split(/\r?\n/u)

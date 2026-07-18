@@ -8,9 +8,14 @@ observability, recovery, and incident-safe shutdown. It deliberately avoids cust
 ## Development lifecycle
 
 ```sh
+make configure-development-signing  # once per developer Mac
 make bootstrap
 make run
 ```
+
+An Apple Development certificate is required for `make run`; a Personal Team is sufficient locally.
+This stable identity prevents rebuilt apps from repeatedly requesting access to the event-store key.
+See [Builder setup](development.md) when Xcode reports an expired account session or missing identity.
 
 The launcher performs this sequence:
 
@@ -18,7 +23,8 @@ The launcher performs this sequence:
 2. Read the OpenAI key and approval keyring from device-local Keychain.
 3. Generate a fresh Gateway bearer, independent approval token, and instance identifier.
 4. Start Gateway on loopback port `0` and wait for a strict readiness event.
-5. Start Scout UI without the OpenAI or approval HMAC keys.
+5. Publish the non-secret approval public keyring and start Scout UI without the OpenAI or approval
+   private keys.
 6. Require an unauthenticated instance-ID health probe before adding the Gateway bearer.
 7. Terminate Scout if Gateway exits and terminate Gateway when Scout exits.
 
@@ -55,6 +61,8 @@ Packaged defaults:
 
 - Event journal: the sandbox container selected by macOS for `dev.scout.discovery`.
 - Context packs: `~/Library/Application Support/Scout/context-packs/`.
+- Approval verifier keyring: `~/Library/Application Support/Scout/approval-public-keyring-v1.json`
+  (public keys only; regenerated from Keychain state).
 - Keychain service: `dev.scout.discovery.gateway-secrets.<ScoutKeychainNamespace>`.
 
 Context packs and journals are customer data. Do not attach them to issues, commits, CI artifacts, or

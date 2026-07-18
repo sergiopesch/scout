@@ -2,12 +2,35 @@
 
 Scout is not ready because a demo looked convincing. Every intelligence boundary must pass a versioned evaluation set before its model, prompt, schema, or reducer version becomes the default.
 
+The repository now contains a deterministic scorer, schema/version checks, release thresholds, a
+synthetic contract corpus, and a privacy-safe manifest template. Run the infrastructure gate with:
+
+```sh
+make evaluation-test
+make evaluation-contract
+```
+
+The synthetic corpus proves scorer and fail-closed threshold behavior; it is not customer or
+model-quality evidence. A real run must use a consented, de-identified manifest whose media entries
+carry immutable SHA-256 digests and resolve through the explicit private media root:
+
+```sh
+node Scripts/run-evaluation.mjs \
+  --manifest Evaluation/corpus/golden-v1/manifest.json \
+  --results /private/path/results.json \
+  --media-root /private/path/media
+```
+
+Raw audio and images remain ignored local inputs and must never enter Git, CI artifacts, context
+packs, or Codex handoffs.
+
 ## Golden-session specification
 
-The repository does not yet contain the consented, de-identified audio/image corpus needed to run the
-model-quality evaluation described below. The deterministic test suites cover schema, reducer,
-authorization, replay, and synthetic provider-boundary behaviour; they are not a substitute for this
-corpus. Completing and versioning the corpus is a production release gate.
+The repository intentionally does not contain raw consented audio/image media. The versioned manifest
+and expected annotations may be committed only after consent, de-identification, retention, and
+licensing review; media stays in the approved private evaluation store. The deterministic and
+synthetic suites are not a substitute for this corpus. Completing the first real manifest and signed
+results run remains a production release gate.
 
 Maintain consented, de-identified sessions representing:
 

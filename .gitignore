@@ -4,6 +4,7 @@
 .env
 .env.*
 !.env.example
+.scout-development.mk
 
 # Xcode and SwiftPM output
 DerivedData/

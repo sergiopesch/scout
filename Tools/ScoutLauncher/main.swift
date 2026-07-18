@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import LocalAuthentication
+import CryptoKit
 import Darwin
 
 private enum LauncherFailure: LocalizedError {
@@ -117,18 +118,36 @@ private enum LauncherLocalAuthorization {
     }
 }
 
+private struct ApprovalSigningKey: Codable {
+    var privateKey: String?
+    let publicKey: String
+}
+
 private struct ApprovalKeyring: Codable {
     let version: Int
+    var generation: Int
     var activeKeyID: String
-    var keys: [String: String]
+    var keys: [String: ApprovalSigningKey]
+    var revokedKeyIDs: [String]
 
     func validated() throws -> ApprovalKeyring {
-        guard version == 1,
+        guard version == 2,
+              generation > 0,
               Self.validKeyID(activeKeyID),
               keys.count <= 32,
               let active = keys[activeKeyID],
-              active.utf8.count >= 32,
-              keys.allSatisfy({ Self.validKeyID($0.key) && $0.value.utf8.count >= 32 })
+              active.privateKey != nil,
+              revokedKeyIDs.count <= 256,
+              Set(revokedKeyIDs).count == revokedKeyIDs.count,
+              !revokedKeyIDs.contains(activeKeyID),
+              revokedKeyIDs.allSatisfy({ Self.validKeyID($0) && keys[$0] == nil }),
+              keys.allSatisfy({ keyID, key in
+                  guard Self.validKeyID(keyID), Self.validRawKey(key.publicKey) else { return false }
+                  if keyID != activeKeyID && key.privateKey != nil { return false }
+                  guard let privateKey = key.privateKey else { return true }
+                  return Self.validRawKey(privateKey)
+                      && Self.publicKey(for: privateKey) == key.publicKey
+              })
         else { throw LauncherFailure.invalidKeyring }
         return self
     }
@@ -139,25 +158,75 @@ private struct ApprovalKeyring: Codable {
         else { return false }
         return value.allSatisfy { $0.isLetter || $0.isNumber || $0 == "." || $0 == "_" || $0 == "-" }
     }
+
+    static func encodeRawKey(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    static func decodeRawKey(_ value: String) -> Data? {
+        guard value.count == 43,
+              value.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" })
+        else { return nil }
+        let standard = value
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/") + "="
+        guard let data = Data(base64Encoded: standard), data.count == 32 else { return nil }
+        return data
+    }
+
+    static func validRawKey(_ value: String) -> Bool {
+        decodeRawKey(value) != nil
+    }
+
+    static func publicKey(for privateKey: String) -> String? {
+        guard let raw = decodeRawKey(privateKey),
+              let signingKey = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw)
+        else { return nil }
+        return encodeRawKey(signingKey.publicKey.rawRepresentation)
+    }
 }
 
 private struct SecretImport: Decodable {
     let openAIAPIKey: String?
-    let approvalKey: String?
+    let approvalPrivateKey: String?
     let approvalKeyID: String?
+    let verificationKeys: [String: String]?
+    let revokedKeyIDs: [String]?
 }
 
 private struct SecretExport: Encodable {
     let openAIAPIKey: String?
-    let approvalKey: String
+    let approvalPrivateKey: String
     let approvalKeyID: String
     let verificationKeys: [String: String]
+    let revokedKeyIDs: [String]
 }
 
 private struct SecretStatus: Encodable {
     let openAIConfigured: Bool
     let activeApprovalKeyID: String
     let verificationKeyIDs: [String]
+    let revokedApprovalKeyIDs: [String]
+    let approvalKeyringGeneration: Int
+}
+
+private struct PublishedApprovalKeyring: Encodable {
+    let version: Int
+    let generation: Int
+    let activeKeyID: String
+    let keys: [String: String]
+    let revokedKeyIDs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case generation
+        case activeKeyID = "active_key_id"
+        case keys
+        case revokedKeyIDs = "revoked_key_ids"
+    }
 }
 
 private struct ApprovalKeyUsage: Encodable {
@@ -176,63 +245,94 @@ private enum ScoutSecrets {
         return "\(base).\(namespace)"
     }
     private static let openAIAccount = "openai-api-key-v1"
-    private static let keyringAccount = "approval-keyring-v1"
+    private static let keyringAccount = "approval-signing-keyring-v2"
 
-    static func importLegacy(_ input: SecretImport) throws {
+    static func importSecrets(_ input: SecretImport) throws {
         if let key = input.openAIAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
             guard key.utf8.count >= 20 else { throw LauncherFailure.invalidInput }
             try upsert(account: openAIAccount, data: Data(key.utf8))
         }
 
-        if let legacy = input.approvalKey?.trimmingCharacters(in: .whitespacesAndNewlines), !legacy.isEmpty {
-            guard legacy.utf8.count >= 32 else { throw LauncherFailure.invalidInput }
+        if let privateKey = input.approvalPrivateKey?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !privateKey.isEmpty {
             let keyID = input.approvalKeyID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "scout-local-v1"
-            guard ApprovalKeyring.validKeyID(keyID) else { throw LauncherFailure.invalidInput }
-            if let existing = try loadKeyring(required: false) {
-                guard existing.keys[keyID] == nil || existing.keys[keyID] == legacy else {
-                    throw LauncherFailure.invalidKeyring
-                }
-                var updated = existing
-                updated.keys[keyID] = legacy
-                updated.activeKeyID = keyID
-                try saveKeyring(updated)
-            } else {
-                try saveKeyring(ApprovalKeyring(version: 1, activeKeyID: keyID, keys: [keyID: legacy]))
+            guard ApprovalKeyring.validKeyID(keyID),
+                  let publicKey = ApprovalKeyring.publicKey(for: privateKey)
+            else { throw LauncherFailure.invalidInput }
+            let revokedKeyIDs = input.revokedKeyIDs ?? []
+            let publicKeys = input.verificationKeys ?? [keyID: publicKey]
+            guard publicKeys[keyID] == publicKey,
+                  publicKeys.count <= 32,
+                  revokedKeyIDs.count <= 256,
+                  Set(revokedKeyIDs).count == revokedKeyIDs.count,
+                  revokedKeyIDs.allSatisfy({ ApprovalKeyring.validKeyID($0) && publicKeys[$0] == nil })
+            else {
+                throw LauncherFailure.invalidKeyring
             }
+            var keys = publicKeys.mapValues { ApprovalSigningKey(privateKey: nil, publicKey: $0) }
+            keys[keyID] = ApprovalSigningKey(privateKey: privateKey, publicKey: publicKey)
+            try saveKeyring(ApprovalKeyring(
+                version: 2,
+                generation: 1,
+                activeKeyID: keyID,
+                keys: keys,
+                revokedKeyIDs: revokedKeyIDs
+            ))
         } else if try loadKeyring(required: false) == nil {
             let keyID = newKeyID()
-            try saveKeyring(ApprovalKeyring(version: 1, activeKeyID: keyID, keys: [keyID: randomSecret()]))
+            try saveKeyring(ApprovalKeyring(
+                version: 2,
+                generation: 1,
+                activeKeyID: keyID,
+                keys: [keyID: createSigningKey()],
+                revokedKeyIDs: []
+            ))
         }
     }
 
     static func export(includeOpenAI: Bool) throws -> SecretExport {
         let keyring = try loadKeyring(required: true)!.validated()
+        try publishVerificationKeyring(keyring)
         let openAI = try read(account: openAIAccount).flatMap { String(data: $0, encoding: .utf8) }
         if includeOpenAI && openAI == nil { throw LauncherFailure.missingOpenAIKey }
-        guard let active = keyring.keys[keyring.activeKeyID] else { throw LauncherFailure.invalidKeyring }
+        guard let active = keyring.keys[keyring.activeKeyID],
+              let privateKey = active.privateKey
+        else { throw LauncherFailure.invalidKeyring }
         return SecretExport(
             openAIAPIKey: includeOpenAI ? openAI : nil,
-            approvalKey: active,
+            approvalPrivateKey: privateKey,
             approvalKeyID: keyring.activeKeyID,
-            verificationKeys: keyring.keys.filter { $0.key != keyring.activeKeyID }
+            verificationKeys: keyring.keys.mapValues(\.publicKey),
+            revokedKeyIDs: keyring.revokedKeyIDs.sorted()
         )
     }
 
     static func status() throws -> SecretStatus {
         let keyring = try loadKeyring(required: true)!.validated()
+        try publishVerificationKeyring(keyring)
         return SecretStatus(
             openAIConfigured: try read(account: openAIAccount) != nil,
             activeApprovalKeyID: keyring.activeKeyID,
-            verificationKeyIDs: keyring.keys.keys.filter { $0 != keyring.activeKeyID }.sorted()
+            verificationKeyIDs: keyring.keys.keys.filter {
+                $0 != keyring.activeKeyID && !keyring.revokedKeyIDs.contains($0)
+            }.sorted(),
+            revokedApprovalKeyIDs: keyring.revokedKeyIDs.sorted(),
+            approvalKeyringGeneration: keyring.generation
         )
     }
 
     static func rotateApproval() throws -> SecretStatus {
         var keyring = try loadKeyring(required: true)!.validated()
         guard keyring.keys.count < 32 else { throw LauncherFailure.keyringFull }
+        guard let active = keyring.keys[keyring.activeKeyID] else { throw LauncherFailure.invalidKeyring }
+        keyring.keys[keyring.activeKeyID] = ApprovalSigningKey(
+            privateKey: nil,
+            publicKey: active.publicKey
+        )
         let keyID = newKeyID()
-        keyring.keys[keyID] = try randomSecret()
+        keyring.keys[keyID] = createSigningKey()
         keyring.activeKeyID = keyID
+        keyring.generation += 1
         try saveKeyring(keyring)
         return try status()
     }
@@ -242,6 +342,10 @@ private enum ScoutSecrets {
         guard keyID != keyring.activeKeyID else { throw LauncherFailure.activeKeyCannotBeRevoked }
         guard keyring.keys.removeValue(forKey: keyID) != nil else {
             throw LauncherFailure.approvalKeyNotFound
+        }
+        if !keyring.revokedKeyIDs.contains(keyID) {
+            keyring.revokedKeyIDs.append(keyID)
+            keyring.generation += 1
         }
         try saveKeyring(keyring)
         return try status()
@@ -253,8 +357,22 @@ private enum ScoutSecrets {
         else { throw LauncherFailure.invalidInput }
         let key = String(cString: pointer).trimmingCharacters(in: .whitespacesAndNewlines)
         guard key.utf8.count >= 20 else { throw LauncherFailure.invalidInput }
-        try importLegacy(SecretImport(openAIAPIKey: key, approvalKey: nil, approvalKeyID: nil))
+        try importSecrets(SecretImport(
+            openAIAPIKey: key,
+            approvalPrivateKey: nil,
+            approvalKeyID: nil,
+            verificationKeys: nil,
+            revokedKeyIDs: nil
+        ))
         return try status()
+    }
+
+    private static func createSigningKey() -> ApprovalSigningKey {
+        let privateKey = Curve25519.Signing.PrivateKey()
+        return ApprovalSigningKey(
+            privateKey: ApprovalKeyring.encodeRawKey(privateKey.rawRepresentation),
+            publicKey: ApprovalKeyring.encodeRawKey(privateKey.publicKey.rawRepresentation)
+        )
     }
 
     private static func loadKeyring(required: Bool) throws -> ApprovalKeyring? {
@@ -271,6 +389,36 @@ private enum ScoutSecrets {
     private static func saveKeyring(_ keyring: ApprovalKeyring) throws {
         let validated = try keyring.validated()
         try upsert(account: keyringAccount, data: try JSONEncoder().encode(validated))
+        try publishVerificationKeyring(validated)
+    }
+
+    private static func publishVerificationKeyring(_ keyring: ApprovalKeyring) throws {
+        let root = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ).appendingPathComponent("Scout", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let published = PublishedApprovalKeyring(
+            version: 1,
+            generation: keyring.generation,
+            activeKeyID: keyring.activeKeyID,
+            keys: keyring.keys.mapValues(\.publicKey),
+            revokedKeyIDs: keyring.revokedKeyIDs.sorted()
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let destination = root.appendingPathComponent("approval-public-keyring-v1.json")
+        try encoder.encode(published).write(to: destination, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: destination.path
+        )
     }
 
     private static func read(account: String) throws -> Data? {
@@ -420,11 +568,17 @@ private enum PackagedScoutLauncher {
 
         let secrets = try ScoutSecrets.export(includeOpenAI: true)
         guard let openAIAPIKey = secrets.openAIAPIKey,
+              let activePublicKey = secrets.verificationKeys[secrets.approvalKeyID],
               let encodedVerificationKeys = String(
-                  data: try JSONEncoder().encode(secrets.verificationKeys),
+                  data: try JSONEncoder().encode(secrets.verificationKeys.filter {
+                      !secrets.revokedKeyIDs.contains($0.key)
+                  }),
                   encoding: .utf8
               )
         else { throw LauncherFailure.invalidKeyring }
+        guard ApprovalKeyring.publicKey(for: secrets.approvalPrivateKey) == activePublicKey else {
+            throw LauncherFailure.invalidKeyring
+        }
         let credentials = try LaunchCredentials.fresh()
         let dataRoot = try applicationSupportRoot()
         let contextPacks = dataRoot.appendingPathComponent("context-packs", isDirectory: true)
@@ -439,9 +593,9 @@ private enum PackagedScoutLauncher {
                 "SCOUT_GATEWAY_TOKEN": credentials.gatewayToken,
                 "SCOUT_APPROVAL_TOKEN": credentials.approvalToken,
                 "SCOUT_GATEWAY_INSTANCE_ID": credentials.instanceID,
-                "SCOUT_APPROVAL_HMAC_KEY": secrets.approvalKey,
+                "SCOUT_APPROVAL_ED25519_PRIVATE_KEY": secrets.approvalPrivateKey,
                 "SCOUT_APPROVAL_KEY_ID": secrets.approvalKeyID,
-                "SCOUT_APPROVAL_VERIFICATION_KEYS": encodedVerificationKeys,
+                "SCOUT_APPROVAL_PUBLIC_KEYS": encodedVerificationKeys,
                 "SCOUT_GATEWAY_ROOT": runtime.path,
                 "SCOUT_DATA_ROOT": dataRoot.path,
                 "SCOUT_CONTEXT_PACK_DIR": contextPacks.path,
@@ -657,7 +811,7 @@ private struct ScoutLauncherMain {
                 guard let input = try? JSONDecoder().decode(SecretImport.self, from: data) else {
                     throw LauncherFailure.invalidInput
                 }
-                try ScoutSecrets.importLegacy(input)
+                try ScoutSecrets.importSecrets(input)
                 try writeJSON(ScoutSecrets.status())
                 status = 0
 #endif

@@ -6,26 +6,16 @@ struct CockpitHeaderView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: ScoutSpacing.large) {
-                    sessionIdentity
-                    Spacer(minLength: 20)
-                    sessionMetrics
-                    captureControls
-                }
-                .fixedSize(horizontal: true, vertical: false)
-
-                HStack(spacing: ScoutSpacing.medium) {
-                    sessionIdentity
-                        .layoutPriority(1)
-                    Spacer(minLength: 12)
-                    captureControls
-                        .fixedSize(horizontal: true, vertical: false)
-                }
+            HStack(spacing: ScoutSpacing.medium) {
+                sessionIdentity
+                    .layoutPriority(1)
+                Spacer(minLength: 12)
+                captureControls
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, ScoutSpacing.large)
-            .padding(.vertical, 10)
+            .padding(.vertical, 9)
 
             if showsDestinations {
                 HStack(spacing: 4) {
@@ -33,14 +23,6 @@ struct CockpitHeaderView: View {
                         destinationButton(destination)
                     }
                     Spacer()
-                    HStack(spacing: 6) {
-                        ScoutBrandMark(size: 16)
-                        Text("Every claim links to source")
-                    }
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(ScoutColors.secondaryText)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Scout trust policy: every claim links to source")
                 }
                 .padding(.horizontal, ScoutSpacing.large)
                 .padding(.bottom, 10)
@@ -72,8 +54,7 @@ struct CockpitHeaderView: View {
                 .accessibilityIdentifier("scout.live.error")
             }
         }
-        .background(.ultraThinMaterial)
-        .background(ScoutColors.graphiteMid.opacity(0.52))
+        .background(ScoutColors.graphiteMid.opacity(0.16))
         .overlay(alignment: .bottom) {
             Rectangle().fill(ScoutColors.stroke).frame(height: 1)
         }
@@ -84,38 +65,21 @@ struct CockpitHeaderView: View {
     }
 
     private var sessionIdentity: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                StatusDot(
-                    color: workspace.captureState == .listening ? ScoutColors.mint : ScoutColors.gold,
-                    pulses: workspace.captureState == .listening
-                )
-                Text(workspace.captureState.label.uppercased())
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .tracking(1)
-                    .foregroundStyle(workspace.captureState == .listening ? ScoutColors.mint : ScoutColors.gold)
-                if workspace.isDemoWorkspace {
-                    Label("FICTIONAL DEMO", systemImage: "theatermasks.fill")
-                        .font(.system(size: 8, weight: .bold, design: .rounded))
-                        .tracking(0.8)
-                        .foregroundStyle(ScoutColors.gold)
-                        .padding(.horizontal, 7)
-                        .frame(height: 19)
-                        .background(ScoutColors.gold.opacity(0.10), in: Capsule())
-                        .overlay(Capsule().stroke(ScoutColors.gold.opacity(0.30), lineWidth: 1))
-                        .accessibilityLabel("Fictional demo data")
-                        .accessibilityIdentifier("scout.demo.badge")
-                }
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(workspace.selectedSession.organization)
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(ScoutColors.primaryText)
-                    .lineLimit(1)
-                Text("/ \(workspace.selectedSession.title)")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(ScoutColors.secondaryText)
-                    .lineLimit(1)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(workspace.selectedSession.organization)
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundStyle(ScoutColors.primaryText)
+                .lineLimit(1)
+            if workspace.isDemoWorkspace {
+                Text("Demo")
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .foregroundStyle(ScoutColors.gold)
+                    .padding(.horizontal, 7)
+                    .frame(height: 19)
+                    .background(ScoutColors.gold.opacity(0.10), in: Capsule())
+                    .overlay(Capsule().stroke(ScoutColors.gold.opacity(0.24), lineWidth: 1))
+                    .accessibilityLabel("Fictional demo data")
+                    .accessibilityIdentifier("scout.demo.badge")
             }
         }
         .accessibilityElement(children: .combine)
@@ -126,63 +90,13 @@ struct CockpitHeaderView: View {
         )
     }
 
-    private var sessionMetrics: some View {
-        HStack(spacing: 7) {
-            MetricPill(symbol: "clock", value: workspace.elapsedLabel, label: "elapsed", tint: ScoutColors.cyan)
-            MetricPill(
-                symbol: "person.2",
-                value: "\(Set(workspace.transcript.map(\.speaker.id)).count)",
-                label: "speakers",
-                tint: ScoutColors.indigo
-            )
-            MetricPill(
-                symbol: "checkmark.shield",
-                value: "\(Int(workspace.evidenceCoverage * 100))%",
-                label: "grounded",
-                tint: ScoutColors.mint
-            )
-        }
-    }
-
     private var captureControls: some View {
-        HStack(spacing: 8) {
-            visualEvidenceButton
-            ScoutIconButton(symbol: "arrow.counterclockwise", help: "Replay demonstration") {
-                workspace.replayDemo()
+        ScoutGlassGroup(spacing: 8) {
+            HStack(spacing: 7) {
+                audioSourceMenu
+                captureButton
             }
-            audioSourceMenu
-            captureButton
         }
-    }
-
-    private var visualEvidenceButton: some View {
-        Button {
-            workspace.importVisualEvidence()
-        } label: {
-            HStack(spacing: 6) {
-                if workspace.visualEvidencePhase.isWorking {
-                    ProgressView()
-                        .controlSize(.mini)
-                } else {
-                    Image(systemName: "photo.badge.plus")
-                }
-                Text(workspace.visualEvidencePhase.isWorking ? "Analyzing…" : "Import visual")
-            }
-            .font(.system(size: 9, weight: .semibold, design: .rounded))
-            .foregroundStyle(ScoutColors.secondaryText)
-            .padding(.horizontal, 9)
-            .frame(height: 30)
-            .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(ScoutColors.strokeStrong, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(workspace.visualEvidencePhase.isWorking)
-        .help("Import a whiteboard, process sketch, or architecture image")
-        .accessibilityLabel("Import whiteboard or image")
-        .accessibilityIdentifier("scout.visualEvidence.import")
     }
 
     private var audioSourceMenu: some View {
@@ -233,8 +147,6 @@ struct CockpitHeaderView: View {
             .foregroundStyle(ScoutColors.secondaryText)
             .padding(.horizontal, 9)
             .frame(height: 30)
-            .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(ScoutColors.strokeStrong, lineWidth: 1))
         }
         .menuStyle(.borderlessButton)
         .fixedSize()

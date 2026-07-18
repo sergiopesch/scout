@@ -35,8 +35,9 @@ The repository contains a production-shaped macOS slice, not a hosted multi-tena
   current validated action boundary.
 - Canonical schema v1.4 commits each model response with its exact bounded derived-event sequence and
   requires a fresh macOS device-owner authentication capability for an exact local review decision.
-- Device-local Keychain owns the OpenAI credential and approval signing keyring. Secrets are absent
-  from `.env.local`, Scout.app, logs, context packs, and MCP output after migration.
+- Device-local Keychain owns the OpenAI credential and active Ed25519 approval signer. The standalone
+  MCP receives only a versioned public verification keyring. Secrets are absent from `.env.local`,
+  Scout.app, logs, context packs, and MCP output after migration.
 - A portable outer app packages and supervises a self-contained Node/Gateway runtime and launches the
   sandboxed Scout UI with ephemeral local credentials. Closed child environments discard ambient
   loader, proxy, provider, and Scout overrides before trusted values are installed.
@@ -46,8 +47,11 @@ The repository contains a production-shaped macOS slice, not a hosted multi-tena
 - Transcript rows distinguish `Stabilising`, `Committed`, and `Uncommitted` durability. Persistence
   failures stay visible even in compact/detached layouts, and archive navigation asks the authoritative
   live coordinator to cancel startup or stop and drain active capture before publishing a paused state.
-- The current source gate passes 80 Core, 21 persistence, 28 Gateway, 7 launcher-script, native
-  launcher-policy, and 123 macOS app tests. The app coverage report is approximately 72%.
+- Diarization admits only structurally exact mono 24 kHz PCM16 WAV before provider use. A versioned
+  evaluation runner, synthetic contract corpus, and privacy-safe consented-corpus template are wired
+  into the source gate; synthetic results are not presented as real-meeting evidence.
+- The current source gate passes 80 Core, 21 persistence, 32 Gateway, 10 launcher-script, 4 evaluation,
+  native launcher-policy, and 123 macOS app tests. The app coverage report is approximately 72%.
 - An earlier ad-hoc ZIP/DMG, packaged peer/auth smoke, and real OpenAI two-speaker synthetic smoke
   passed on Apple silicon. That artifact predates the current audit fixes and is historical evidence,
   not a current release certification.
@@ -56,9 +60,14 @@ The repository contains a production-shaped macOS slice, not a hosted multi-tena
 
 ## Quick start for authorised collaborators
 
-Requirements: macOS 15+, Xcode/Swift 6, XcodeGen 2.45.4, and Node.js 24.14.0.
+Requirements: macOS 15+, Xcode/Swift 6, XcodeGen 2.45.4, Node.js 24.14.0, and an
+Apple Development identity. A Personal Team is sufficient for local development; authorised release
+work uses the shared Scout team and separate Developer ID credentials.
 
 ```sh
+# Once per developer Mac, after adding the team in Xcode > Settings > Accounts:
+make configure-development-signing
+
 cp .env.example .env.local
 # Add OPENAI_API_KEY to .env.local once.
 make bootstrap
@@ -69,7 +78,11 @@ make run
 Keychain, creates the approval keyring, removes secret lines from `.env.local`, and generates the
 disposable Xcode project. `make run` starts a Gateway on an OS-assigned loopback port with fresh
 credentials, authenticates that exact child before customer bytes leave the app, and supervises both
-processes as one lifetime.
+processes as one lifetime. It refuses to launch an ad-hoc-signed UI because ad-hoc identity changes on
+every rebuild and causes macOS to repeatedly request Keychain authorization.
+
+See the [builder guide](docs/development.md) for first-day setup, module ownership, focused test loops,
+signing recovery, and the pull-request checklist.
 
 Run the complete local gate with:
 
@@ -119,11 +132,13 @@ code-sign verification fails. See [the release guide](docs/release.md).
 - `Gateway/` — OpenAI relay, approval authority, context-pack store, and stdio MCP implementation.
 - `Tools/ScoutLauncher/` — native Keychain, runtime supervision, package smoke, and live-smoke boundary.
 - `Plugins/scout/` — Codex plugin and build-from-approved-discovery workflow.
+- `Evaluation/` — versioned scorer contracts and privacy-safe corpus manifests; raw media is excluded.
 - `Scripts/` and `Packaging/` — development launch, portable packaging, signing, and provisioning.
 
 ## Documentation
 
 - [Architecture](docs/architecture.md)
+- [Builder guide](docs/development.md)
 - [Trust model](docs/trust-model.md)
 - [Security policy and threat model](SECURITY.md)
 - [Operations guide](docs/operations.md)

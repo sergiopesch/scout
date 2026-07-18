@@ -7,25 +7,121 @@ import OpenAI, { toFile } from "openai";
 import { z } from "zod/v4";
 import { PublicError } from "./errors.js";
 
-export const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+const REQUIRED_SAMPLE_RATE = 24_000;
+const REQUIRED_CHANNELS = 1;
+const REQUIRED_BITS_PER_SAMPLE = 16;
+const MAX_AUDIO_SECONDS = 60;
+const MAX_PCM_BYTES = REQUIRED_SAMPLE_RATE * REQUIRED_CHANNELS * (REQUIRED_BITS_PER_SAMPLE / 8) * MAX_AUDIO_SECONDS;
+export const MAX_AUDIO_BYTES = 44 + MAX_PCM_BYTES;
 const MAX_MULTIPART_BYTES = MAX_AUDIO_BYTES + 128 * 1024;
 
-const supportedExtensions = new Set([".flac", ".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".ogg", ".wav", ".webm"]);
 const LanguageSchema = z.string().regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/).max(16);
+
+export interface DiarizationAudioProbe {
+  readonly container: "wav";
+  readonly codec: "pcm_s16le";
+  readonly channels: 1;
+  readonly sampleRate: 24_000;
+  readonly bitsPerSample: 16;
+  readonly frameCount: number;
+  readonly durationSeconds: number;
+}
 
 export interface DiarizationUpload {
   readonly bytes: Buffer;
   readonly filename: string;
   readonly mimeType: string;
+  readonly probe: DiarizationAudioProbe;
   readonly language?: string;
 }
 
 function safeFilename(value: string): string {
   const name = basename(value).replace(/[^A-Za-z0-9._-]/g, "_").slice(-180);
-  if (!name || !supportedExtensions.has(extname(name).toLowerCase())) {
-    throw new PublicError(415, "unsupported_audio_format", "The audio file format is not supported");
+  if (!name || extname(name).toLowerCase() !== ".wav") {
+    throw new PublicError(415, "unsupported_audio_format", "Scout accepts only its canonical PCM16 WAV capture format");
   }
   return name;
+}
+
+export function probeDiarizationWAV(bytes: Buffer, mimeType: string): DiarizationAudioProbe {
+  if (mimeType !== "audio/wav" && mimeType !== "audio/x-wav") {
+    throw new PublicError(415, "unsupported_audio_format", "The diarization upload must be audio/wav");
+  }
+  if (bytes.length < 44
+    || bytes.toString("ascii", 0, 4) !== "RIFF"
+    || bytes.toString("ascii", 8, 12) !== "WAVE"
+    || bytes.readUInt32LE(4) !== bytes.length - 8) {
+    throw new PublicError(422, "invalid_audio_container", "The WAV container is incomplete or inconsistent");
+  }
+
+  let offset = 12;
+  let formatSeen = false;
+  let dataSeen = false;
+  let frameCount = 0;
+  while (offset < bytes.length) {
+    if (offset + 8 > bytes.length) {
+      throw new PublicError(422, "invalid_audio_container", "The WAV chunk table is truncated");
+    }
+    const chunkID = bytes.toString("ascii", offset, offset + 4);
+    const chunkSize = bytes.readUInt32LE(offset + 4);
+    const dataOffset = offset + 8;
+    const dataEnd = dataOffset + chunkSize;
+    const paddedEnd = dataEnd + (chunkSize % 2);
+    if (dataEnd > bytes.length || paddedEnd > bytes.length) {
+      throw new PublicError(422, "invalid_audio_container", "The WAV chunk length exceeds the upload");
+    }
+
+    if (chunkID === "fmt ") {
+      if (formatSeen || chunkSize !== 16) {
+        throw new PublicError(422, "invalid_audio_format", "The WAV format chunk must be canonical PCM");
+      }
+      formatSeen = true;
+      const audioFormat = bytes.readUInt16LE(dataOffset);
+      const channels = bytes.readUInt16LE(dataOffset + 2);
+      const sampleRate = bytes.readUInt32LE(dataOffset + 4);
+      const byteRate = bytes.readUInt32LE(dataOffset + 8);
+      const blockAlign = bytes.readUInt16LE(dataOffset + 12);
+      const bitsPerSample = bytes.readUInt16LE(dataOffset + 14);
+      if (audioFormat !== 1
+        || channels !== REQUIRED_CHANNELS
+        || sampleRate !== REQUIRED_SAMPLE_RATE
+        || bitsPerSample !== REQUIRED_BITS_PER_SAMPLE
+        || blockAlign !== 2
+        || byteRate !== REQUIRED_SAMPLE_RATE * 2) {
+        throw new PublicError(
+          422,
+          "unsupported_audio_encoding",
+          "Audio must be mono 24 kHz little-endian PCM16 with canonical frame metadata",
+        );
+      }
+    } else if (chunkID === "data") {
+      if (!formatSeen || dataSeen || chunkSize === 0 || chunkSize > MAX_PCM_BYTES || chunkSize % 2 !== 0) {
+        throw new PublicError(422, "invalid_audio_frames", "The WAV data chunk is empty, duplicated, or out of bounds");
+      }
+      dataSeen = true;
+      frameCount = chunkSize / 2;
+    } else {
+      throw new PublicError(422, "unsupported_audio_chunk", "The WAV upload contains a non-canonical chunk");
+    }
+    offset = paddedEnd;
+  }
+
+  if (!formatSeen || !dataSeen || offset !== bytes.length) {
+    throw new PublicError(422, "invalid_audio_container", "The WAV upload lacks a complete format or data chunk");
+  }
+  const durationSeconds = frameCount / REQUIRED_SAMPLE_RATE;
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > MAX_AUDIO_SECONDS) {
+    throw new PublicError(422, "invalid_audio_duration", "Audio duration must be greater than zero and at most 60 seconds");
+  }
+  return {
+    container: "wav",
+    codec: "pcm_s16le",
+    channels: 1,
+    sampleRate: 24_000,
+    bitsPerSample: 16,
+    frameCount,
+    durationSeconds,
+  };
 }
 
 export async function parseDiarizationMultipart(request: IncomingMessage): Promise<DiarizationUpload> {
@@ -120,10 +216,13 @@ export async function parseDiarizationMultipart(request: IncomingMessage): Promi
     throw new PublicError(400, "missing_audio_file", "A non-empty audio file is required");
   }
 
+  const bytes = Buffer.concat(chunks, fileBytes);
+  const probe = probeDiarizationWAV(bytes, mimeType);
   return {
-    bytes: Buffer.concat(chunks, fileBytes),
+    bytes,
     filename,
     mimeType,
+    probe,
     ...(language ? { language } : {}),
   };
 }
@@ -162,9 +261,21 @@ export class DiarizationService {
     if (!parsed.success) {
       throw new PublicError(502, "provider_schema_violation", "The intelligence provider returned an invalid diarization proposal");
     }
+    const tolerance = Math.max(0.05, upload.probe.durationSeconds * 0.01);
+    let priorEnd = 0;
+    if (Math.abs(parsed.data.duration - upload.probe.durationSeconds) > tolerance
+      || parsed.data.segments.some((segment) => {
+        const invalid = segment.start < priorEnd
+          || segment.end > upload.probe.durationSeconds + 0.000_001;
+        priorEnd = segment.end;
+        return invalid;
+      })) {
+      throw new PublicError(502, "provider_schema_violation", "Diarization output exceeds the validated audio boundary");
+    }
     return {
       revision_kind: "diarization_proposal",
       model_call: { model: this.model },
+      input_audio: upload.probe,
       transcription: parsed.data,
     };
   }

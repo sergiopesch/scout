@@ -1,3 +1,4 @@
+import { createPrivateKey, createPublicKey } from "node:crypto";
 import {
   computeContextPackHash,
   ContextPackApprovalAuthority,
@@ -7,8 +8,24 @@ import {
 } from "../src/context-packs.js";
 
 export const TEST_APPROVAL_OPTIONS: ContextPackApprovalOptions = {
-  key: "scout-test-approval-key-that-is-never-used-in-production",
-  keyID: "scout-test-v1",
+  signingKey: {
+    privateKey: Buffer.alloc(32, 7).toString("base64url"),
+    keyID: "scout-test-v1",
+  },
+  verificationKeys: {},
+};
+
+const privateKey = createPrivateKey({
+  key: Buffer.concat([
+    Buffer.from("302e020100300506032b657004220420", "hex"),
+    Buffer.from(TEST_APPROVAL_OPTIONS.signingKey!.privateKey, "base64url"),
+  ]),
+  format: "der",
+  type: "pkcs8",
+});
+const publicDER = createPublicKey(privateKey).export({ format: "der", type: "spki" });
+export const TEST_APPROVAL_PUBLIC_KEYS = {
+  [TEST_APPROVAL_OPTIONS.signingKey!.keyID]: publicDER.subarray(-32).toString("base64url"),
 };
 
 const testApprovalAuthority = new ContextPackApprovalAuthority(TEST_APPROVAL_OPTIONS);

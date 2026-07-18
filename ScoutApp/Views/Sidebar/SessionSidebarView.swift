@@ -60,9 +60,8 @@ struct SessionSidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            brand
+            sidebarHeader
             sessionList
-            engineStatus
         }
         .background {
             if reduceTransparency {
@@ -74,22 +73,16 @@ struct SessionSidebarView: View {
                 }
             }
         }
-        .navigationSplitViewColumnWidth(min: 224, ideal: 248, max: 282)
+        .navigationSplitViewColumnWidth(min: 210, ideal: 238, max: 270)
         .accessibilityIdentifier("scout.sessionSidebar")
     }
 
-    private var brand: some View {
-        HStack(spacing: 11) {
-            ScoutBrandMark(size: 36)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("SCOUT")
-                    .font(.system(size: 15, weight: .heavy, design: .rounded))
-                    .tracking(1.5)
-                    .foregroundStyle(ScoutColors.primaryText)
-                Text("Discovery engine")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(ScoutColors.secondaryText)
-            }
+    private var sidebarHeader: some View {
+        HStack(spacing: 9) {
+            ScoutBrandMark(size: 24)
+            Text("Sessions")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(ScoutColors.primaryText)
             Spacer()
             Button {
                 workspace.beginNewDiscoverySession()
@@ -97,7 +90,6 @@ struct SessionSidebarView: View {
                 Image(systemName: "plus")
                     .font(.system(size: 11, weight: .bold))
                     .frame(width: 28, height: 28)
-                    .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.plain)
             .foregroundStyle(ScoutColors.primaryText)
@@ -108,18 +100,18 @@ struct SessionSidebarView: View {
             .accessibilityLabel("Start a new discovery session")
             .accessibilityIdentifier("scout.newSession")
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
+        .padding(.horizontal, 13)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
     }
 
     private var sessionList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 5) {
-                sidebarSectionHeader("NOW")
+                sidebarSectionHeader("Now")
                 sessionRow(workspace.sessions[0])
 
-                sidebarSectionHeader("RECENT")
+                sidebarSectionHeader("Recent")
                     .padding(.top, 10)
                 ForEach(workspace.sessions.dropFirst()) { session in
                     sessionRow(session)
@@ -145,40 +137,12 @@ struct SessionSidebarView: View {
 
     private func sidebarSectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 9, weight: .bold))
-            .tracking(0.9)
+            .font(.system(size: 9, weight: .semibold))
             .foregroundStyle(ScoutColors.secondaryText.opacity(0.72))
             .padding(.horizontal, 5)
             .padding(.bottom, 2)
     }
 
-    private var engineStatus: some View {
-        HStack(spacing: 9) {
-            StatusDot(
-                color: operationalStatus.tone.color,
-                pulses: operationalStatus.pulses
-            )
-            VStack(alignment: .leading, spacing: 1) {
-                Text(operationalStatus.title)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(ScoutColors.primaryText)
-                Text(operationalStatus.detail)
-                    .font(.system(size: 9))
-                    .foregroundStyle(ScoutColors.secondaryText)
-            }
-            Spacer()
-        }
-        .padding(12)
-        .background(Color.black.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(ScoutColors.stroke, lineWidth: 1))
-        .padding(12)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(operationalStatus.accessibilityLabel)
-    }
-
-    private var operationalStatus: SessionSidebarOperationalStatus {
-        SessionSidebarOperationalStatus(workspace: workspace)
-    }
 }
 
 private struct SessionRow: View {
@@ -186,44 +150,29 @@ private struct SessionRow: View {
     let isSelected: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(session.status.color.opacity(isSelected ? 0.20 : 0.10))
-                    .frame(width: 34, height: 34)
-                Text(String(session.organization.prefix(1)))
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(session.status.color)
-            }
-
+        HStack(alignment: .top, spacing: 8) {
+            StatusDot(color: session.status.color, pulses: session.status == .live)
+                .padding(.top, 3)
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 5) {
-                    Text(session.organization)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(ScoutColors.primaryText)
-                        .lineLimit(1)
-                    if session.status == .live {
-                        StatusDot(color: ScoutColors.mint, pulses: true)
-                    }
-                }
+                Text(session.organization)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(ScoutColors.primaryText)
+                    .lineLimit(1)
                 Text(session.title)
                     .font(.system(size: 10))
                     .foregroundStyle(ScoutColors.secondaryText)
                     .lineLimit(2)
-                HStack(spacing: 5) {
-                    Text(session.relativeDate)
-                    Text("·")
-                    Text("\(session.participantCount) people")
-                }
+                Text("\(session.relativeDate) · \(session.participantCount)")
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(session.status == .live ? ScoutColors.mint : ScoutColors.secondaryText.opacity(0.8))
             }
             Spacer(minLength: 0)
         }
-        .padding(8)
-        .background(isSelected ? Color.white.opacity(0.07) : Color.clear, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
+        .background(isSelected ? Color.white.opacity(0.065) : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(isSelected ? ScoutColors.strokeStrong : Color.clear, lineWidth: 1)
         )
         .contentShape(Rectangle())

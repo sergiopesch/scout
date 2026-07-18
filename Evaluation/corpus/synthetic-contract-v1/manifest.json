@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "corpus_id": "scout-synthetic-contract-v1",
+  "classification": "synthetic_contract",
+  "purpose": "Exercises Scout's evaluation contract without customer or human-participant media.",
+  "model_contract": {
+    "realtime_model": "gpt-4o-mini-transcribe",
+    "diarization_model": "gpt-4o-transcribe-diarize",
+    "claims_model": "account-configured",
+    "prompt_version": "scout-claims-v1",
+    "schema_version": "1.4",
+    "reducer_version": "scout-core-current",
+    "scoring_policy": "scout-evaluation-v1"
+  },
+  "thresholds": {
+    "max_word_error_rate": 0.1,
+    "max_diarization_error_rate": 0.1,
+    "min_claim_precision": 0.9,
+    "min_claim_recall": 0.9,
+    "min_evidence_recall": 0.9,
+    "min_redaction_recall": 1,
+    "max_p95_latency_ms": 2000,
+    "max_cost_per_case_usd": 0.1
+  },
+  "cases": [
+    {
+      "id": "contract-001",
+      "reference": {
+        "transcript": "Inventory reconciliation runs nightly.",
+        "speaker_frames": ["speaker-a", "speaker-a"],
+        "claim_ids": ["claim-nightly"],
+        "evidence_ids": ["evidence-nightly"],
+        "required_redactions": ["customer-email"]
+      }
+    }
+  ]
+}

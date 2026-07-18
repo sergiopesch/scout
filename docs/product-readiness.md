@@ -8,9 +8,10 @@ reference, market-share study, or promise that every enterprise method and platf
 Scout is a credible, production-shaped local product with strong deterministic trust boundaries and a
 fully passing source gate. It is not yet a production-certified release. The append-only domain,
 encrypted journal, model-proposal boundary, local review, bounded handoff, native cockpit, Gateway,
-Codex plugin archive, and HTML story are implemented and tested. Current release blockers are
-asymmetric handoff verification, decoder-grade media validation, a fresh signed package/live-provider
-run, real capture/accessibility validation, and a versioned model-quality corpus.
+Codex plugin archive, and HTML story are implemented and tested. Ed25519 verification-only handoff,
+decoder-grade WAV admission, and a versioned evaluation harness are now implemented. Current release
+blockers are a fresh signed package/live-provider run, real capture/accessibility validation, and the
+first consented, de-identified model-quality corpus run.
 
 Health labels used below:
 
@@ -26,15 +27,15 @@ Health labels used below:
 | 1 | Create a discovery session | **Operational** | The sidebar creates one selected, clean draft with aligned session/evidence IDs; transition races are disabled and tested. Durable multi-session catalogue/reopen is still conditional. |
 | 2 | Select in-room or meeting capture | **Conditional** | Microphone/system-audio adapters, permission copy, source scoping, cancellation, partial rollback, and drain are implemented. Real signed permission and ambient-capture tests were not run in this audit. |
 | 3 | See low-latency transcription | **Conditional** | Exact PCM timing, bounded frames, stable item reconciliation, and `gpt-4o-mini-transcribe` configuration are tested. Current live-provider/reconnect evidence is missing. |
-| 4 | Refine speakers with diarization | **Conditional** | Exact submitted PCM duration and returned segment bounds are checked. Gateway upload parsing is not decoder-grade, and diarization lacks a dedicated durable model-call receipt. |
+| 4 | Refine speakers with diarization | **Conditional** | The Gateway admits only exact mono 24 kHz PCM16 WAV, validates decoded frames/duration before provider use, and bounds returned segments. A dedicated durable diarization model-call receipt and real-session validation remain open. |
 | 5 | Preserve immutable evidence | **Operational** | Canonical, hash-linked events and encrypted SQLite replay pass sequence, concurrency, corruption, idempotency, and restart tests. Per-engagement key shredding is not implemented. |
 | 6 | Turn evidence into claims | **Operational** | Strict provider schemas, input boundaries, exact projection manifests, deterministic planning, and atomic append prevent model output from directly becoming trusted state. |
 | 7 | Review claims and observations | **Operational** | Accept/reject/re-attest operations bind a fresh device-owner capability to one current target. Device-owner auth means the signed-in device owner, not a named participant. |
 | 8 | Explore the customer graph | **Conditional** | Claims and relationships preserve provenance and contradictory scalar claims coexist. First-class contested/resolved state, collision-free edge labels, and exact source-region navigation are not complete. |
 | 9 | Import visual evidence | **Conditional** | Native ImageIO normalization, metadata stripping, hashing, Gateway rechecks, and evidence-linked proposal cards are tested. Proposals intentionally cannot promote into graph truth yet. |
 | 10 | Surface gaps and opportunities | **Conditional** | Deterministic questions and evidence-weighted quick wins are tested. Normal live refresh does not yet complete every action artifact; the full transformation is currently most visible in the fictional demo. |
-| 11 | Select and approve one POC | **Operational with a cryptographic blocker** | Approved export now fails closed unless every selected accepted claim carries canonical evidence IDs and an exact journal head. HMAC still gives MCP signing-capable material when configured. |
-| 12 | Build from Scout in Codex | **Conditional** | The plugin validates, starts standalone, is read-only over stdio, and carries deterministic notices/SBOM. Approved reads require operator-provisioned HMAC material and Node on `PATH`; without them they fail closed. |
+| 11 | Select and approve one POC | **Operational** | Approved export fails closed unless every selected accepted claim carries canonical evidence IDs and an exact journal head; the Gateway signs the exact binding with its Keychain-backed Ed25519 seed. |
+| 12 | Build from Scout in Codex | **Conditional** | The plugin validates, starts standalone, is read-only over stdio, and carries deterministic notices/SBOM. It verifies with published public keys only. A fresh packaged end-to-end run remains open. |
 | 13 | Install a production release | **Not implemented as current evidence** | Packaging/notarization automation exists, but no post-fix Developer ID/notarized/clean-Mac package was produced during this audit. |
 
 ## Claims checked against implementation
@@ -48,7 +49,7 @@ Health labels used below:
 | Customer content is encrypted locally | **Operational in the product path.** The app supplies a device-bound key; the public persistence adapter still permits `nil` encryption for tests/other callers. |
 | Gateway is a trusted local relay | **Operational.** Loopback/auth/schema boundaries and exact peer attestation are tested. Realtime upstream output needs a stricter allowlist. |
 | Secrets never enter the app bundle/context | **Operational in tested launch/package code.** Child environments are closed and distributable plaintext export/import commands are unavailable. A fresh packaged inspection is still required. |
-| Context packs are approved, immutable, and minimized | **Substantially operational.** Closure, hashes, session head, redaction fields, canonical evidence, and immutable files are checked. Asymmetric verifier separation is the remaining architectural blocker. |
+| Context packs are approved, immutable, and minimized | **Operational in the source gate.** Closure, hashes, session head, redaction fields, canonical evidence, immutable files, and Ed25519 signer/verifier separation are checked. |
 | The product works across real meetings | **Not proven in this audit.** Automated lifecycle coverage is strong, but real mic/system audio, provider reconnect, duration, accents, crosstalk, and consent flows require the golden corpus and signed runtime. |
 
 ## Improvements completed in this audit
@@ -73,17 +74,13 @@ Health labels used below:
 
 ### Release blockers
 
-1. Replace HMAC context-pack approval with an asymmetric scheme (for example Ed25519): Gateway owns
-   private signing keys; MCP receives public verification keys only; rotation and revocation remain
-   append-only and versioned.
-2. Add a sandboxed media probe/decoder before provider calls. Enforce allowlisted codec/container,
-   channel count, sample rate, frame count, exact duration, decompression budget, and bounded errors.
-3. Produce a fresh self-contained package, provision it through the authenticated flow, run offline
+1. Produce a fresh self-contained package, provision it through the authenticated flow, run offline
    and live synthetic smokes, inspect bundle/log/context outputs for secrets, then Developer ID sign,
    notarize, staple, Gatekeeper-test, and install on a clean Mac.
-4. Run real microphone and explicitly selected system-audio sessions with informed consent, network
+2. Run real microphone and explicitly selected system-audio sessions with informed consent, network
    interruption, pause/resume, long duration, and device-owner review.
-5. Build and version the consented, de-identified golden audio/image corpus in `evaluation.md`.
+3. Complete the consented, de-identified golden manifest and run the versioned scorer against privately
+   held audio/image media as specified in `evaluation.md`.
 
 ### Product-quality blockers
 

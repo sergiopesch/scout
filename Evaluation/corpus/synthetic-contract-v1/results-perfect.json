@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "corpus_id": "scout-synthetic-contract-v1",
+  "run_id": "synthetic-perfect-v1",
+  "model_contract": {
+    "realtime_model": "gpt-4o-mini-transcribe",
+    "diarization_model": "gpt-4o-transcribe-diarize",
+    "claims_model": "account-configured",
+    "prompt_version": "scout-claims-v1",
+    "schema_version": "1.4",
+    "reducer_version": "scout-core-current",
+    "scoring_policy": "scout-evaluation-v1"
+  },
+  "cases": [
+    {
+      "id": "contract-001",
+      "transcript": "Inventory reconciliation runs nightly.",
+      "speaker_frames": ["speaker-a", "speaker-a"],
+      "claim_ids": ["claim-nightly"],
+      "evidence_ids": ["evidence-nightly"],
+      "redacted_tokens": ["customer-email"],
+      "latency_ms": 500,
+      "cost_usd": 0.01
+    }
+  ]
+}

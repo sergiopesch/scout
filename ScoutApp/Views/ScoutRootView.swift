@@ -52,7 +52,8 @@ struct ScoutRootView: View {
                         surface: controller.selectedSurface ?? .discovery
                     )
                         .inspectorColumnWidth(min: 320, ideal: 360, max: 440)
-                        .background(ScoutColors.graphiteMid.opacity(0.72))
+                        .background(.thinMaterial)
+                        .background(ScoutColors.graphiteMid.opacity(0.20))
                 }
             }
 
@@ -62,6 +63,7 @@ struct ScoutRootView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .tint(ScoutColors.porcelain)
         .onAppear {
             controller.synchronize(with: workspace.destination)
             columnVisibility = controller.isSidebarVisible ? .all : .detailOnly
@@ -132,7 +134,7 @@ private struct ScoutInspectorContent: View {
     @State private var section: Section = .evidence
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             if surface == .discovery {
                 Picker("Inspector section", selection: $section) {
                     ForEach(Section.allCases) { section in
@@ -141,8 +143,8 @@ private struct ScoutInspectorContent: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .padding(.horizontal, 10)
-                .padding(.top, 10)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
             }
 
             Group {
@@ -154,10 +156,10 @@ private struct ScoutInspectorContent: View {
                             .frame(minHeight: 126, idealHeight: 150)
                     }
                 } else {
-                    TrustInspectorView(workspace: workspace, compact: false)
+                    TrustInspectorView(workspace: workspace, compact: true)
                 }
             }
-            .padding(surface == .discovery ? 10 : 0)
+            .padding(surface == .discovery ? 12 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("scout.inspector")

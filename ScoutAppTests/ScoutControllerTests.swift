@@ -135,10 +135,10 @@ final class ScoutControllerTests: XCTestCase {
 
         controller.toggleSidebar()
         XCTAssertFalse(controller.isSidebarVisible)
-        XCTAssertTrue(controller.isInspectorVisible)
+        XCTAssertFalse(controller.isInspectorVisible)
 
         controller.toggleInspector()
         XCTAssertFalse(controller.isSidebarVisible)
-        XCTAssertFalse(controller.isInspectorVisible)
+        XCTAssertTrue(controller.isInspectorVisible)
     }
 }

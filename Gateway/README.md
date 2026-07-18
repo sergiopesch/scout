@@ -35,10 +35,10 @@ Supported configuration:
 - `SCOUT_GATEWAY_TOKEN` — 32+ character local bearer token required for every non-health HTTP and WebSocket route.
 - `SCOUT_GATEWAY_INSTANCE_ID` — per-launch identity returned only by the supervised Gateway instance and verified before the app adds its bearer or sends customer bytes.
 - `SCOUT_APPROVAL_TOKEN` — independent, per-launch credential accepted only by the explicit approval route.
-- `SCOUT_APPROVAL_HMAC_KEY` and `SCOUT_APPROVAL_KEY_ID` — active Gateway-only approval signer loaded
-  from Keychain.
-- `SCOUT_APPROVAL_VERIFICATION_KEYS` — bounded JSON keyring of retained approval keys accepted for
-  verification. Because the format is symmetric HMAC, possession is also signing-capable.
+- `SCOUT_APPROVAL_ED25519_PRIVATE_KEY` and `SCOUT_APPROVAL_KEY_ID` — active Gateway-only Ed25519
+  signer loaded from Keychain.
+- `SCOUT_APPROVAL_PUBLIC_KEYS` — bounded JSON map of retained Ed25519 public verification keys. When
+  absent, verification-only processes load `approval-public-keyring-v1.json` from `SCOUT_DATA_ROOT`.
 - `SCOUT_CONTEXT_PACK_DIR` — must remain inside `SCOUT_DATA_ROOT`; development defaults to
   `Gateway/context-packs` and the packaged app uses Application Support.
 - `SCOUT_GATEWAY_HOST` and `SCOUT_GATEWAY_PORT` — default to `127.0.0.1` and port `0` (OS assigned). The host is fail-closed to loopback; there is no non-loopback override for the desktop bridge.
@@ -47,17 +47,19 @@ Supported configuration:
 
 - `GET /health` is the only unauthenticated route. A supervised instance also returns its per-launch identity so the native app can authenticate the peer before sending a bearer or customer data.
 - `WS /realtime` proxies only transcription session updates and input-audio-buffer events. It enforces 24 kHz mono PCM, the server-selected model, bounded frames, backpressure, and a 59-minute lifetime.
-- `POST /v1/transcriptions/diarize` accepts one bounded multipart audio file and returns a diarization proposal. It always uses `diarized_json` and `chunking_strategy=auto`.
+- `POST /v1/transcriptions/diarize` accepts only Scout's canonical mono 24 kHz PCM16 WAV, proves its
+  RIFF/chunk/frame/duration structure within a one-minute decompression budget before the provider
+  call, and returns a bounded diarization proposal. It always uses `diarized_json` and `chunking_strategy=auto`.
 - `POST /v1/claims/extract` accepts bounded stabilized utterances and returns strict evidence-linked proposals. Model output is revalidated and unknown evidence references are rejected.
 - `POST /v1/images/observe` is loopback-only and bearer-authenticated. It accepts one metadata-stripped JPEG (8 MiB, 4096 px per side, 16.7 MP), verifies the declared dimensions and SHA-256 against the bytes, and returns strict entity, relationship, and note proposals. Image text is treated as untrusted evidence, model persistence is disabled, sensitive attributes and face identification are prohibited, and no proposal mutates Scout state directly.
 - `POST /v1/context-packs` is loopback-only and bearer-authenticated for drafts and already authenticated artifacts. It cannot turn `approved_at` into authority by itself.
-- `POST /v1/context-packs/approve` additionally requires the independent per-launch approval credential. It verifies the immutable body and journal head, binds the exact revision and previous head, mints the Gateway HMAC approval, and then performs the per-session compare-and-swap write.
+- `POST /v1/context-packs/approve` additionally requires the independent per-launch approval credential. It verifies the immutable body and journal head, binds the exact revision and previous head, mints the Gateway Ed25519 signature, and then performs the per-session compare-and-swap write.
 - `GET /v1/context-packs` exposes approved artifacts only, with optional `session_id`, `limit` (1–100), and opaque `cursor` pagination parameters. `GET /v1/context-packs/:context_pack_id` reads one approved artifact.
 - MCP is stdio-only. The Scout plugin launches the archive-bundled process and owns its pipes; there
   is no pre-bindable TCP endpoint or MCP bearer. The archive resolves without repository files and does
-  not query Keychain. With the current symmetric HMAC approval format, approved reads still require an
-  explicitly supplied keyring and otherwise fail closed; asymmetric signatures are the remaining path
-  to a genuinely verify-only standalone plugin.
+  not query Keychain. It loads the launcher's non-secret published public keyring and therefore can
+  verify approved reads but cannot mint an approval. Missing, malformed, or revoked verification
+  material fails approved reads closed.
 
 MCP tools are read-only: `scout_list_context_packs`, `scout_get_context_pack`, `scout_get_customer_model`, `scout_get_action_pack`, and `scout_get_session_head`. The session-head tool resolves the latest approved revision and graph digest so Codex can detect a stale handoff before building.
 
@@ -67,7 +69,7 @@ The wire shape is `{ "schema_version": 1, "content_sha256": "…", "body": { …
 
 The body contract is closed. Trust and epistemic modes are `heard`, `inferred`, `suggested`, or `confirmed`; selected POCs are explicitly `suggested` or `confirmed`. Claims carry a stable evidence ID and optional related entity. Relationships carry their own epistemic mode, validation state, supporting claim IDs, and source evidence IDs; those references must resolve inside the pack. IDs are unique within each collection, and `graph_state_sha256` must match the canonical entities-and-relationships projection.
 
-Approved handoffs are an exact authorization closure, not workspace snapshots. Their claims must equal the selected POC support set, relationships and entities must resolve from that set, open questions are excluded, and the only exported opportunity is the selected POC. The Gateway rejects any broader approved body even when its content hash is otherwise valid. Rotation signs new packs with the active key and continues verifying old packs by their immutable `approval.key_id` until an operator deliberately retires that key. Retained HMAC keys are operationally inactive signers, but they are not cryptographically verification-only.
+Approved handoffs are an exact authorization closure, not workspace snapshots. Their claims must equal the selected POC support set, relationships and entities must resolve from that set, open questions are excluded, and the only exported opportunity is the selected POC. The Gateway rejects any broader approved body even when its content hash is otherwise valid. Rotation signs new packs with the active private key, deletes the former private seed, and continues verifying old packs with retained public keys until an operator deliberately revokes one. Legacy HMAC approvals are not accepted and must be explicitly reapproved.
 
 Raw audio, unrestricted transcript fields, API keys, and bundles claiming to include raw audio or unrestricted transcripts are rejected. Unapproved packs may be retained locally but are hidden from REST and MCP reads by default. Approved excerpts are represented as minimal evidence-linked claim excerpts, not unrestricted transcript dumps.
 

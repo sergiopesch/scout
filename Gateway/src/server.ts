@@ -53,12 +53,13 @@ function defaultDependencies(config: GatewayConfig): GatewayDependencies {
     imageObservations: new ImageObservationsService(openAI, config.visionModel),
     contextPacks: new ContextPackStore(
       config.contextPackDirectory,
-      config.approvalKey === undefined
+      config.approvalPrivateKey === undefined && Object.keys(config.approvalPublicKeys).length === 0
         ? undefined
         : {
-            key: config.approvalKey,
-            keyID: config.approvalKeyID,
-            verificationKeys: config.approvalVerificationKeys,
+            ...(config.approvalPrivateKey === undefined
+              ? {}
+              : { signingKey: { keyID: config.approvalKeyID, privateKey: config.approvalPrivateKey } }),
+            verificationKeys: config.approvalPublicKeys,
           },
       config.contextPackContainmentRoot,
     ),

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve } from "node:path";
 import { config as loadDotEnv } from "dotenv";
@@ -69,9 +69,9 @@ const EnvironmentSchema = z.object({
   SCOUT_GATEWAY_TOKEN: z.string().min(32).max(512).optional(),
   SCOUT_GATEWAY_INSTANCE_ID: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/).optional(),
   SCOUT_APPROVAL_TOKEN: z.string().min(32).max(512).optional(),
-  SCOUT_APPROVAL_HMAC_KEY: z.string().min(32).max(1024).optional(),
+  SCOUT_APPROVAL_ED25519_PRIVATE_KEY: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(),
   SCOUT_APPROVAL_KEY_ID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/).default("scout-local-v1"),
-  SCOUT_APPROVAL_VERIFICATION_KEYS: z.string().max(32_768).optional(),
+  SCOUT_APPROVAL_PUBLIC_KEYS: z.string().max(32_768).optional(),
 });
 
 export interface GatewayConfig {
@@ -88,9 +88,9 @@ export interface GatewayConfig {
   readonly ingestToken: string | undefined;
   readonly gatewayInstanceID: string | undefined;
   readonly approvalToken: string | undefined;
-  readonly approvalKey: string | undefined;
+  readonly approvalPrivateKey: string | undefined;
   readonly approvalKeyID: string;
-  readonly approvalVerificationKeys: Readonly<Record<string, string>>;
+  readonly approvalPublicKeys: Readonly<Record<string, string>>;
   readonly requestTimeoutMs: number;
 }
 
@@ -114,22 +114,77 @@ function resolveContextPackDirectory(value: string | undefined): string {
   return candidate;
 }
 
-function parseApprovalVerificationKeys(value: string | undefined): Readonly<Record<string, string>> {
+function parseApprovalPublicKeys(value: string | undefined): Readonly<Record<string, string>> {
   if (value === undefined) return {};
   let candidate: unknown;
   try {
     candidate = JSON.parse(value);
   } catch {
-    throw new Error("SCOUT_APPROVAL_VERIFICATION_KEYS is invalid");
+    throw new Error("SCOUT_APPROVAL_PUBLIC_KEYS is invalid");
   }
   const parsed = z.record(
     z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
-    z.string().min(32).max(1024),
+    z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   ).safeParse(candidate);
   if (!parsed.success || Object.keys(parsed.data).length > 32) {
-    throw new Error("SCOUT_APPROVAL_VERIFICATION_KEYS is invalid");
+    throw new Error("SCOUT_APPROVAL_PUBLIC_KEYS is invalid");
   }
   return parsed.data;
+}
+
+const ApprovalPublicKeyringSchema = z.object({
+  version: z.literal(1),
+  generation: z.number().int().positive(),
+  active_key_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+  keys: z.record(
+    z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+    z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  ),
+  revoked_key_ids: z.array(
+    z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+  ).max(32),
+}).strict();
+
+function loadPublishedApprovalPublicKeys(
+  environment: NodeJS.ProcessEnv,
+): Readonly<Record<string, string>> {
+  const configuredRoot = environment.SCOUT_DATA_ROOT;
+  const root = configuredRoot === undefined ? dataRoot : resolve(configuredRoot);
+  const keyringPath = resolve(root, "approval-public-keyring-v1.json");
+  if (!existsSync(keyringPath)) return {};
+  try {
+    const metadata = lstatSync(keyringPath);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 32_768) {
+      throw new Error("unsafe approval public keyring file");
+    }
+    const canonicalRoot = realpathSync(root);
+    const canonicalPath = realpathSync(keyringPath);
+    const pathFromRoot = relative(canonicalRoot, canonicalPath);
+    if (pathFromRoot === ".." || pathFromRoot.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) {
+      throw new Error("approval public keyring escapes the data root");
+    }
+    const parsed = ApprovalPublicKeyringSchema.parse(
+      JSON.parse(readFileSync(canonicalPath, "utf8")),
+    );
+    if (Object.keys(parsed.keys).length === 0
+      || Object.keys(parsed.keys).length > 32
+      || parsed.keys[parsed.active_key_id] === undefined
+      || parsed.revoked_key_ids.some((keyID) => parsed.keys[keyID] !== undefined)) {
+      throw new Error("inconsistent approval public keyring");
+    }
+    return parsed.keys;
+  } catch {
+    throw new Error("Scout's published approval public keyring is invalid");
+  }
+}
+
+function approvalPublicKeys(
+  environment: NodeJS.ProcessEnv,
+  configured: string | undefined,
+): Readonly<Record<string, string>> {
+  return configured === undefined
+    ? loadPublishedApprovalPublicKeys(environment)
+    : parseApprovalPublicKeys(configured);
 }
 
 export function loadGatewayConfig(
@@ -164,9 +219,9 @@ export function loadGatewayConfig(
     ingestToken: parsed.data.SCOUT_GATEWAY_TOKEN,
     gatewayInstanceID: parsed.data.SCOUT_GATEWAY_INSTANCE_ID,
     approvalToken: parsed.data.SCOUT_APPROVAL_TOKEN,
-    approvalKey: parsed.data.SCOUT_APPROVAL_HMAC_KEY,
+    approvalPrivateKey: parsed.data.SCOUT_APPROVAL_ED25519_PRIVATE_KEY,
     approvalKeyID: parsed.data.SCOUT_APPROVAL_KEY_ID,
-    approvalVerificationKeys: parseApprovalVerificationKeys(parsed.data.SCOUT_APPROVAL_VERIFICATION_KEYS),
+    approvalPublicKeys: approvalPublicKeys(environment, parsed.data.SCOUT_APPROVAL_PUBLIC_KEYS),
     requestTimeoutMs: 60_000,
   };
 }
@@ -178,19 +233,23 @@ export function loadContextPackDirectory(environment: NodeJS.ProcessEnv = proces
 
 export function loadContextPackApprovalOptions(
   environment: NodeJS.ProcessEnv = process.env,
-): { key: string; keyID: string; verificationKeys: Readonly<Record<string, string>> } | undefined {
+): {
+  signingKey?: { keyID: string; privateKey: string };
+  verificationKeys: Readonly<Record<string, string>>;
+} | undefined {
   if (environment === process.env) loadWorkspaceEnvironment();
-  const key = environment.SCOUT_APPROVAL_HMAC_KEY;
+  const privateKey = environment.SCOUT_APPROVAL_ED25519_PRIVATE_KEY;
   const keyID = environment.SCOUT_APPROVAL_KEY_ID ?? "scout-local-v1";
-  const verificationKeysValue = environment.SCOUT_APPROVAL_VERIFICATION_KEYS;
-  if (key === undefined) return undefined;
-  if (key.length < 32) throw new Error("SCOUT_APPROVAL_HMAC_KEY is invalid");
+  const verificationKeys = approvalPublicKeys(environment, environment.SCOUT_APPROVAL_PUBLIC_KEYS);
+  if (privateKey === undefined && Object.keys(verificationKeys).length === 0) return undefined;
+  if (privateKey !== undefined && !/^[A-Za-z0-9_-]{43}$/.test(privateKey)) {
+    throw new Error("SCOUT_APPROVAL_ED25519_PRIVATE_KEY is invalid");
+  }
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(keyID)) {
     throw new Error("SCOUT_APPROVAL_KEY_ID is invalid");
   }
   return {
-    key,
-    keyID,
-    verificationKeys: parseApprovalVerificationKeys(verificationKeysValue),
+    ...(privateKey === undefined ? {} : { signingKey: { keyID, privateKey } }),
+    verificationKeys,
   };
 }

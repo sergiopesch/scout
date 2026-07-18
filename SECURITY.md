@@ -52,10 +52,9 @@ The repository has six runtime boundaries:
 5. The encrypted append-only journal is authoritative. UI diagrams, questions, quick wins, and action
    packs are disposable projections over verified events.
 6. The Codex plugin and stdio MCP process expose approved, immutable, evidence-minimized context packs
-   only. They do not fetch Keychain material or provider credentials. The current symmetric HMAC format
-   still requires explicitly configured signing-capable key material for approved reads; without it,
-   the standalone MCP process starts but fails those reads closed. Asymmetric verify-only signatures
-   remain required to remove that residual privilege.
+   only. They do not fetch Keychain material or provider credentials. They receive a versioned,
+   non-secret Ed25519 public keyring from Application Support and have no signing capability. Missing,
+   malformed, revoked, or mismatched verification material fails approved reads closed.
 
 Meeting speech, transcribed text, filenames, imported pixels, visible whiteboard text, model output,
 HTTP bodies, WebSocket frames, MCP arguments, and context-pack files are attacker-controlled inputs.
@@ -88,13 +87,13 @@ Security invariants:
   non-synchronizing device-bound key, and replayable without contacting OpenAI.
 - Native captured PCM validation enforces frame shape, sample rate, ordering, byte, and exact-duration
   bounds. Native image import enforces byte, frame, dimension, pixel, and decompression limits before
-  normalization. The Gateway's diarization upload currently enforces multipart shape, extension, and
-  byte limits but does not decode/probe the audio container; this remains a release blocker.
+  normalization. The Gateway independently parses the exact RIFF/WAV structure and accepts only mono
+  24 kHz PCM16 with a one-minute decoded-frame budget before invoking diarization.
 - Context-pack approval is explicit, immutable, hash-verified, evidence-linked, and fail-closed when
   POC scope, constraints, success criteria, redaction state, or current session head is missing/stale.
-- Gateway-minted approval uses a Keychain-backed active HMAC key plus retained rotation entries;
-  ordinary transport authentication cannot assert approval. HMAC holders remain signing-capable, so
-  asymmetric verification-only MCP keys are still required for release.
+- Gateway-minted approval uses a Keychain-backed active Ed25519 private seed. Retired private seeds
+  are destroyed on rotation; verifiers receive only retained non-revoked public keys. Ordinary
+  transport authentication and verification-only MCP processes cannot assert approval.
 - Raw audio, normalized source images, unrestricted transcripts, personal data, secrets, and hidden
   instructions are excluded from Codex exports by default.
 
@@ -124,8 +123,9 @@ Current deployment boundaries:
   token leakage, or a remote-bind path is reportable.
 - Malformed audio or images can target native/provider parsers or exhaust resources. Native ImageIO
   preflight and normalization, structural Gateway JPEG verification, bounded multipart streaming,
-  local PCM segmentation, request timeouts, and provider response limits reduce the surface. A
-  sandboxed decoder/probe for uploaded diarization audio is still required.
+  exact PCM/WAV parsing, local PCM segmentation, request timeouts, and provider response limits reduce
+  the surface. Alternative codecs, extra chunks, forged lengths, trailing bytes, and overlong audio
+  reject before the provider boundary.
 - A crash, retry, or concurrent callback can target event ordering. SQLite `BEGIN IMMEDIATE`, expected
   stream versions, canonical idempotency hashes, a FIFO journal boundary, reducer invariants, and full
   replay verification prevent silent forks or partial graph commits.

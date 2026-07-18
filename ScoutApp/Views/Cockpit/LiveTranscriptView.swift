@@ -18,12 +18,14 @@ struct LiveTranscriptView: View {
         let finalUtteranceID = utterances.last?.id
 
         VStack(spacing: 0) {
-            ScoutPanelHeader(eyebrow: "Diarised source", title: "Live transcript") {
-                HStack(spacing: 9) {
-                    Label(speakerCountLabel, systemImage: "person.wave.2")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(ScoutColors.secondaryText)
-                    SearchField(text: $searchText)
+            ScoutPanelHeader(title: "Transcript") {
+                if !workspace.transcript.isEmpty {
+                    HStack(spacing: 9) {
+                        Label(speakerCountLabel, systemImage: "person.2")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(ScoutColors.secondaryText)
+                        SearchField(text: $searchText)
+                    }
                 }
             }
             .padding(.horizontal, ScoutSpacing.medium)

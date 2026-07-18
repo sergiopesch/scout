@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { loadGatewayConfig } from "../src/config.js";
+import { loadContextPackApprovalOptions, loadGatewayConfig } from "../src/config.js";
 
 const baseEnvironment: NodeJS.ProcessEnv = {
   OPENAI_API_KEY: "test-api-key-not-a-real-secret",
@@ -48,21 +51,51 @@ test("image observations use the claims model by default and accept an explicit 
 test("Gateway accepts a bounded approval verification keyring and rejects malformed rotation state", () => {
   const configuration = loadGatewayConfig({
     ...baseEnvironment,
-    SCOUT_APPROVAL_HMAC_KEY: "active-approval-key-that-is-at-least-thirty-two-bytes",
+    SCOUT_APPROVAL_ED25519_PRIVATE_KEY: Buffer.alloc(32, 3).toString("base64url"),
     SCOUT_APPROVAL_KEY_ID: "scout-local-v2",
-    SCOUT_APPROVAL_VERIFICATION_KEYS: JSON.stringify({
-      "scout-local-v1": "retained-approval-key-that-is-at-least-thirty-two-bytes",
+    SCOUT_APPROVAL_PUBLIC_KEYS: JSON.stringify({
+      "scout-local-v1": Buffer.alloc(32, 4).toString("base64url"),
     }),
   }, { loadWorkspaceEnv: false });
-  assert.deepEqual(configuration.approvalVerificationKeys, {
-    "scout-local-v1": "retained-approval-key-that-is-at-least-thirty-two-bytes",
+  assert.deepEqual(configuration.approvalPublicKeys, {
+    "scout-local-v1": Buffer.alloc(32, 4).toString("base64url"),
   });
 
   assert.throws(
     () => loadGatewayConfig({
       ...baseEnvironment,
-      SCOUT_APPROVAL_VERIFICATION_KEYS: "not-json",
+      SCOUT_APPROVAL_PUBLIC_KEYS: "not-json",
     }, { loadWorkspaceEnv: false }),
-    /SCOUT_APPROVAL_VERIFICATION_KEYS is invalid/,
+    /SCOUT_APPROVAL_PUBLIC_KEYS is invalid/,
+  );
+});
+
+test("standalone verification loads only the published public keyring and rejects unsafe state", (context) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-public-keyring-"));
+  context.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(root, { recursive: true });
+  const publicKey = Buffer.alloc(32, 8).toString("base64url");
+  const keyringPath = join(root, "approval-public-keyring-v1.json");
+  writeFileSync(keyringPath, JSON.stringify({
+    version: 1,
+    generation: 2,
+    active_key_id: "scout-local-v2",
+    keys: { "scout-local-v2": publicKey },
+    revoked_key_ids: ["scout-local-v1"],
+  }));
+  assert.deepEqual(loadContextPackApprovalOptions({ SCOUT_DATA_ROOT: root }), {
+    verificationKeys: { "scout-local-v2": publicKey },
+  });
+
+  writeFileSync(keyringPath, JSON.stringify({
+    version: 1,
+    generation: 2,
+    active_key_id: "scout-local-v2",
+    keys: { "scout-local-v2": publicKey, "scout-local-v1": publicKey },
+    revoked_key_ids: ["scout-local-v1"],
+  }));
+  assert.throws(
+    () => loadContextPackApprovalOptions({ SCOUT_DATA_ROOT: root }),
+    /published approval public keyring is invalid/,
   );
 });

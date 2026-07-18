@@ -8,10 +8,15 @@ and secret boundaries are product requirements rather than implementation sugges
 
 ## Development setup
 
-These commands are for maintainers and other collaborators who already have written authorisation to
-use the Scout-owned source. Public repository access does not itself grant that permission.
+These commands are for maintainers and other builders who already have written authorisation to use
+the Scout-owned source. Public repository access does not itself grant that permission. Start with the
+[builder guide](docs/development.md) for ownership boundaries and troubleshooting.
 
 ```sh
+# Add an Apple account in Xcode > Settings > Accounts and create an Apple Development certificate.
+# A Personal Team is sufficient for local work. The generated setting is ignored and is not secret.
+make configure-development-signing
+
 cp .env.example .env.local
 # Add OPENAI_API_KEY once if live intelligence is required.
 make bootstrap
@@ -20,6 +25,24 @@ make check
 
 Most tests use deterministic fixtures and do not contact OpenAI. `make live-smoke` is explicitly
 opt-in because it performs a small provider request.
+
+Each collaborator uses their own Apple Development certificate and their own device-local Keychain
+items. Never export an event-store key, provider key, or another developer's signing private key to
+make setup easier. The first stable-signed launch on a Mac that previously ran an ad-hoc build may
+request one final authorization for the existing event key; choose **Always Allow**. Subsequent builds
+from that developer identity satisfy the same designated requirement.
+
+## Builder lanes
+
+- Domain and trust contracts: `Packages/ScoutCore`; keep this target pure and deterministic.
+- Persistence: `Packages/ScoutPersistence`; preserve verified replay and append-only authority.
+- Native experience: `ScoutApp`; adapters stay behind protocols and never receive the OpenAI key.
+- Provider and handoff boundary: `Gateway`; authenticate before accepting customer bytes.
+- Codex workflow: `Plugins/scout`; consume only approved context packs.
+- Release, evaluation, and operations: `Scripts`, `Packaging`, `Evaluation`, and `docs`.
+
+Coordinate before changing a contract owned by another lane. Never edit the generated
+`Scout.xcodeproj`; change `project.yml` and regenerate it.
 
 ## Change workflow
 
@@ -61,8 +84,9 @@ release credentials, or generated runtime data.
 
 The repository is publicly viewable but Scout-owned source intentionally remains all rights reserved.
 Public visibility is not permission to clone for use, modify, or redistribute Scout source or binaries.
-Identified third-party components remain under their own terms. External code contributions are not
-accepted until contribution terms are published; security reports belong in GitHub private
-vulnerability reporting and must never be placed in a public issue. Authorised release operators must
+Identified third-party components remain under their own terms. External contributions require written
+authorisation; authorised builders should use pull requests and the repository template. Security
+reports belong in GitHub private vulnerability reporting and must never be placed in a public issue.
+Authorised release operators must
 include the matching Node.js license, complete Gateway dependency licenses/notices, and the
 build-specific SBOM.

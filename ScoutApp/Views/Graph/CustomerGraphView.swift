@@ -16,21 +16,13 @@ struct CustomerGraphView: View {
         }
 
         VStack(spacing: 0) {
-            ScoutPanelHeader(eyebrow: "Living customer model", title: "Current-state architecture") {
-                HStack(spacing: 6) {
-                    graphLegend
-                    ScoutIconButton(symbol: showRelationshipLabels ? "tag.fill" : "tag", help: "Toggle relationship labels", isActive: showRelationshipLabels) {
-                        showRelationshipLabels.toggle()
-                    }
-                    ScoutIconButton(symbol: "minus.magnifyingglass", help: "Zoom out") {
-                        zoom = max(0.78, zoom - 0.08)
-                    }
-                    ScoutIconButton(symbol: "plus.magnifyingglass", help: "Zoom in") {
-                        zoom = min(1.18, zoom + 0.08)
-                    }
-                    ScoutIconButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Fit graph") {
-                        zoom = 1
-                    }
+            ScoutPanelHeader(title: "Map") {
+                if !entities.isEmpty {
+                    GraphControlMenu(
+                        zoom: $zoom,
+                        showsRelationshipLabels: $showRelationshipLabels,
+                        needsValidationCount: needsValidationCount
+                    )
                 }
             }
             .padding(.horizontal, ScoutSpacing.medium)
@@ -102,26 +94,6 @@ struct CustomerGraphView: View {
         .scoutPanel()
     }
 
-    private var graphLegend: some View {
-        HStack(spacing: 8) {
-            legendDot(label: "System", color: ScoutColors.blue)
-            legendDot(label: "Process", color: ScoutColors.mint)
-            legendDot(label: "Risk", color: ScoutColors.coral)
-            legendDot(label: "Needs review", color: ScoutColors.gold)
-        }
-        .padding(.trailing, 4)
-    }
-
-    private func legendDot(label: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 5, height: 5)
-            Text(label)
-                .font(.system(size: 8, weight: .medium))
-                .foregroundStyle(ScoutColors.secondaryText)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
     private func point(for entity: GraphEntity, in size: CGSize) -> CGPoint {
         CGPoint(
             x: max(86, min(size.width - 86, size.width * entity.x)),
@@ -159,6 +131,41 @@ struct CustomerGraphView: View {
     }
 }
 
+private struct GraphControlMenu: View {
+    @Binding var zoom: CGFloat
+    @Binding var showsRelationshipLabels: Bool
+    let needsValidationCount: Int
+
+    var body: some View {
+        Menu {
+            Toggle("Relationship labels", isOn: $showsRelationshipLabels)
+            Divider()
+            Button("Zoom in", systemImage: "plus.magnifyingglass") {
+                zoom = min(1.18, zoom + 0.08)
+            }
+            Button("Zoom out", systemImage: "minus.magnifyingglass") {
+                zoom = max(0.78, zoom - 0.08)
+            }
+            Button("Fit graph", systemImage: "arrow.up.left.and.arrow.down.right") {
+                zoom = 1
+            }
+            if needsValidationCount > 0 {
+                Divider()
+                Text("\(needsValidationCount) relationship\(needsValidationCount == 1 ? "" : "s") need review")
+            }
+        } label: {
+            Image(systemName: needsValidationCount > 0 ? "ellipsis.circle.fill" : "ellipsis.circle")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 28, height: 28)
+                .foregroundStyle(needsValidationCount > 0 ? ScoutColors.gold : ScoutColors.secondaryText)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Map controls")
+        .accessibilityLabel("Map controls, \(needsValidationCount) relationships need review")
+    }
+}
+
 private struct GraphLayoutSnapshot: Hashable {
     let id: String
     let x: Double
@@ -188,7 +195,7 @@ private struct GraphGrid: View {
                 path.addLine(to: CGPoint(x: size.width, y: y))
                 y += spacing
             }
-            context.stroke(path, with: .color(Color.white.opacity(0.026)), lineWidth: 0.6)
+            context.stroke(path, with: .color(Color.white.opacity(0.018)), lineWidth: 0.6)
         }
         .background(
             RadialGradient(

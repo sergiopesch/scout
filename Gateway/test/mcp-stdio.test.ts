@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
-import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { ContextPackStore } from "../src/context-packs.js";
-import { makeContextPack, TEST_APPROVAL_OPTIONS } from "./context-pack-fixture.js";
+import {
+  makeContextPack,
+  TEST_APPROVAL_OPTIONS,
+  TEST_APPROVAL_PUBLIC_KEYS,
+} from "./context-pack-fixture.js";
 
 function textContent(result: unknown): string {
   if (!result || typeof result !== "object") throw new Error("MCP result is invalid");
@@ -35,6 +39,13 @@ test("archive-shaped Scout plugin launches the approved-pack MCP surface over ow
   context.after(() => rm(pluginRoot, { recursive: true, force: true }));
   const store = new ContextPackStore(directory, TEST_APPROVAL_OPTIONS, dataRoot);
   await store.put(makeContextPack({ context_pack_id: "pack-stdio" }));
+  await writeFile(join(dataRoot, "approval-public-keyring-v1.json"), JSON.stringify({
+    version: 1,
+    generation: 1,
+    active_key_id: TEST_APPROVAL_OPTIONS.signingKey?.keyID,
+    keys: TEST_APPROVAL_PUBLIC_KEYS,
+    revoked_key_ids: [],
+  }));
 
   const client = new Client({ name: "scout-stdio-test", version: "1.0.0" });
   const transport = new StdioClientTransport({
@@ -46,8 +57,6 @@ test("archive-shaped Scout plugin launches the approved-pack MCP surface over ow
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       SCOUT_CONTEXT_PACK_DIR: directory,
       SCOUT_DATA_ROOT: dataRoot,
-      SCOUT_APPROVAL_HMAC_KEY: TEST_APPROVAL_OPTIONS.key,
-      SCOUT_APPROVAL_KEY_ID: TEST_APPROVAL_OPTIONS.keyID,
     },
   });
   context.after(() => client.close());
@@ -59,6 +68,7 @@ test("archive-shaped Scout plugin launches the approved-pack MCP surface over ow
   const result = await client.callTool({ name: "scout_list_context_packs", arguments: {} });
   assert.equal(JSON.parse(textContent(result)).context_packs[0].context_pack_id, "pack-stdio");
 
+  await rm(join(dataRoot, "approval-public-keyring-v1.json"));
   const unconfiguredClient = new Client({ name: "scout-stdio-unconfigured-test", version: "1.0.0" });
   const unconfiguredTransport = new StdioClientTransport({
     command: process.execPath,

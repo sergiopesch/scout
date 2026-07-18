@@ -7,36 +7,48 @@ Scout uses five separate secret classes:
 | Secret | Lifetime | Holder | Purpose |
 | --- | --- | --- | --- |
 | OpenAI API key | persistent, revocable | Keychain and Gateway process | Provider authorization |
-| Approval HMAC keyring | persistent, rotatable | Keychain, Gateway, explicitly configured MCP process | Authenticate approved context packs |
+| Approval Ed25519 signer | persistent, rotatable | Keychain and Gateway process | Sign approved context packs |
+| Approval public keyring | persistent, versioned | Application Support, Gateway, MCP process | Verify approved context packs |
 | Gateway bearer | one launch | launcher, Gateway, Scout UI | Authorize native REST/WebSocket traffic |
 | Approval token | one launch | launcher, Gateway, Scout UI | Separate operator-approval capability |
 | Event-store encryption key | device-local persistent | app Keychain and persistence cipher | Encrypt append-only journal bodies |
 
-The app process never receives the OpenAI key or approval HMAC keyring. It receives only ephemeral
+The app process never receives the OpenAI key or approval private keyring. It receives only ephemeral
 Gateway and approval tokens. No secret is serialized into an event, context pack, log, SBOM, release
 manifest, or Codex prompt.
 
-The bundled MCP process does not query Keychain or invoke a launcher secret-export command. Because the
-current approval format uses symmetric HMAC, an MCP process can verify approved packs only when an
-operator explicitly supplies the matching keyring in its environment. That process then holds signing-
-capable material even though its tools are read-only. The default archive starts without the key and
-fails approved reads closed. Replacing HMAC with asymmetric signatures is required before a standalone
-installed plugin can be both automatically operational and genuinely verify-only.
+The bundled MCP process does not query Keychain or invoke a launcher secret-export command. The
+launcher publishes `approval-public-keyring-v1.json` under Scout Application Support with owner-only
+permissions. It contains only Ed25519 public keys, generation metadata, and revoked key IDs. The MCP
+can verify the exact approval binding but cannot derive the private seed or mint an approval. Missing,
+malformed, or revoked keys fail approved reads closed.
 
 ## Storage
 
 The native launcher stores Gateway secrets as non-synchronizing generic-password items with
 `AfterFirstUnlockThisDeviceOnly` accessibility. The OpenAI key and JSON approval keyring use distinct
-accounts. A keyring contains one active signer and up to 31 retained compatibility keys. The software
-uses retained keys only for verification, but HMAC does not make that restriction cryptographic.
+accounts. A keyring contains one active Ed25519 private seed, up to 31 retained public compatibility
+keys, and a bounded revoked-ID history. Rotation removes the former private seed before the new signer
+becomes active; revocation removes its public key and frees a compatibility slot. The public keyring is
+rebuildable output, not secret or signing authority.
 
 The sandboxed UI separately owns the event-store encryption key. It is device-bound, non-synchronizing,
 and currently has no export, backup, or rotation path. Loss of that Keychain item makes the encrypted
 journal unrecoverable; this is deliberate fail-closed behavior until per-engagement keys exist.
 
-Development uses the base Keychain service. Packaged ad-hoc builds receive a random namespace to avoid
+Development uses the base Keychain service and a machine-local Apple Development identity configured
+with `make configure-development-signing`. The normal `make run` path refuses ad-hoc UI signing: an
+ad-hoc app's designated requirement collapses to its changing code hash, so macOS cannot recognize
+successive builds as the same trusted application. Each authorised collaborator creates their own
+development certificate and device-local event key; private signing identities and Keychain secrets
+are never copied between maintainers. Packaged ad-hoc builds receive a random namespace to avoid
 silently inheriting secrets from a differently signed executable. Developer ID releases use the stable
 `release-v1` namespace so updates signed by the same identity can retain access.
+
+If a Mac already created `dev.scout.discovery.event-store` under an older ad-hoc build, its first
+Apple Development-signed launch can show one final Keychain migration prompt. Enter the login password
+and choose **Always Allow** so the existing encrypted journal remains readable. Do not delete or
+recreate that item merely to avoid the prompt: the current journal has no key export or recovery path.
 
 ## Initial migration
 
@@ -46,8 +58,9 @@ cp .env.example .env.local
 make configure-secrets
 ```
 
-Legacy `SCOUT_APPROVAL_HMAC_KEY` and `SCOUT_APPROVAL_KEY_ID` values are preserved if present. Device-
-owner authentication is required before the developer helper imports or exports any secret. The
+Legacy HMAC variables are removed from `.env.local` but are not migrated into the Ed25519 keyring.
+Existing HMAC-approved packs therefore fail closed and require explicit restaging and reapproval.
+Device-owner authentication is required before the developer helper imports or exports any secret. The
 migration sends secret JSON only over a child-process stdin pipe and removes all recognized secret
 lines from `.env.local` after Keychain confirms the import. If Keychain import fails, the command leaves
 `.env.local` untouched; fix Keychain access, rerun migration, then verify that secret lines are absent.
@@ -83,11 +96,10 @@ or environment export.
 make rotate-approval-key
 ```
 
-Development rotation generates a new random active key and key ID, retains prior keys as inactive
-compatibility entries, and never rewrites approved packs. New packs use the new key; old packs remain
-readable because verification selects the key named in their immutable approval binding. Any process
-that receives a retained HMAC secret could still construct signatures, which is why asymmetric
-replacement is a release requirement.
+Development rotation generates a new random Ed25519 private seed and key ID, deletes the old private
+seed, retains its public key as a compatibility entry, republishes verification state, and never
+rewrites approved packs. New packs use the new key; old packs remain readable because verification
+selects the public key named in their immutable approval binding.
 
 The keyring holds at most 32 keys total. Rotation fails closed at that limit; inventory, reapprove or
 expire affected packs, then retire a retained key before trying again.

@@ -97,6 +97,8 @@ async function compileLauncher() {
     "Security",
     "-framework",
     "LocalAuthentication",
+    "-framework",
+    "CryptoKit",
   ];
   if (mode === "adhoc") launcherArguments.push("-D", "SCOUT_ADHOC_PROVISIONING");
   launcherArguments.push(

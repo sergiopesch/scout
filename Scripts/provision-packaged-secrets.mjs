@@ -45,8 +45,10 @@ function run(executable, args, input) {
 const source = JSON.parse(await run(developerTool, ["secrets", "export"]));
 const imported = {
   openAIAPIKey: source.openAIAPIKey,
-  approvalKey: source.approvalKey,
+  approvalPrivateKey: source.approvalPrivateKey,
   approvalKeyID: source.approvalKeyID,
+  verificationKeys: source.verificationKeys,
+  revokedKeyIDs: source.revokedKeyIDs,
 };
 const status = JSON.parse(await run(packagedTool, ["secrets", "import"], JSON.stringify(imported)));
 if (!status.openAIConfigured || status.activeApprovalKeyID !== source.approvalKeyID) {

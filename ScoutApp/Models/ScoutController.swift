@@ -113,7 +113,7 @@ final class ScoutController {
     private(set) var tabs: [ScoutWorkspaceTab]
     var selectedTabID: ScoutSurface?
     var isSidebarVisible = true
-    var isInspectorVisible = true
+    var isInspectorVisible = false
     var isCommandPalettePresented = false
     private(set) var windows: [ScoutWindowRole: ScoutManagedWindowState]
 

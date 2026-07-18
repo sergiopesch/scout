@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createPrivateKey, createPublicKey } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,15 +11,29 @@ import {
   ContextPackStore,
 } from "../src/context-packs.js";
 import { PublicError } from "../src/errors.js";
-import { makeContextPack, TEST_APPROVAL_OPTIONS } from "./context-pack-fixture.js";
+import {
+  makeContextPack,
+  TEST_APPROVAL_OPTIONS,
+  TEST_APPROVAL_PUBLIC_KEYS,
+} from "./context-pack-fixture.js";
+
+function publicKeyFor(privateKey: string): string {
+  const key = createPrivateKey({
+    key: Buffer.concat([
+      Buffer.from("302e020100300506032b657004220420", "hex"),
+      Buffer.from(privateKey, "base64url"),
+    ]),
+    format: "der",
+    type: "pkcs8",
+  });
+  return createPublicKey(key).export({ format: "der", type: "spki" }).subarray(-32).toString("base64url");
+}
 
 test("approval-key rotation retains verification of packs signed by non-retired keys", () => {
+  const rotatedPrivateKey = Buffer.alloc(32, 11).toString("base64url");
   const rotated = new ContextPackApprovalAuthority({
-    key: "scout-rotated-active-key-that-is-never-used-in-production",
-    keyID: "scout-test-v2",
-    verificationKeys: {
-      [TEST_APPROVAL_OPTIONS.keyID]: TEST_APPROVAL_OPTIONS.key,
-    },
+    signingKey: { keyID: "scout-test-v2", privateKey: rotatedPrivateKey },
+    verificationKeys: TEST_APPROVAL_PUBLIC_KEYS,
   });
   const oldPack = makeContextPack();
   assert.equal(rotated.verify(oldPack), true);
@@ -30,10 +45,25 @@ test("approval-key rotation retains verification of packs signed by non-retired 
   assert.equal(rotated.verify(newlyApproved), true);
 
   const retired = new ContextPackApprovalAuthority({
-    key: "scout-rotated-active-key-that-is-never-used-in-production",
-    keyID: "scout-test-v2",
+    signingKey: { keyID: "scout-test-v2", privateKey: rotatedPrivateKey },
+    verificationKeys: { "scout-test-v2": publicKeyFor(rotatedPrivateKey) },
   });
   assert.equal(retired.verify(oldPack), false);
+});
+
+test("public verification material cannot mint context-pack approvals", () => {
+  const verifier = new ContextPackApprovalAuthority({
+    verificationKeys: TEST_APPROVAL_PUBLIC_KEYS,
+  });
+  assert.equal(verifier.verify(makeContextPack()), true);
+
+  const unsigned = structuredClone(makeContextPack());
+  delete unsigned.approval;
+  assert.throws(() => verifier.approve(unsigned), (error: unknown) => {
+    assert.ok(error instanceof PublicError);
+    assert.equal(error.code, "context_pack_approval_unconfigured");
+    return true;
+  });
 });
 
 test("ContextPackStore writes immutable, body-hash-verified artifacts idempotently", async (context) => {
@@ -156,8 +186,11 @@ test("approved context packs require a Gateway-minted binding over the exact imm
   });
 
   const rotatedKeyStore = new ContextPackStore(directory, {
-    key: "a-different-test-approval-key-that-cannot-verify-old-packs",
-    keyID: "scout-test-v2",
+    signingKey: {
+      keyID: "scout-test-v2",
+      privateKey: Buffer.alloc(32, 19).toString("base64url"),
+    },
+    verificationKeys: {},
   });
   await assert.rejects(() => rotatedKeyStore.get("pack-approved-by-gateway"), (error: unknown) => {
     assert.ok(error instanceof PublicError);

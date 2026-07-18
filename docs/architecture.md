@@ -41,7 +41,7 @@ flowchart LR
     Codex["Codex Scout plugin"] -->|"Owned stdio MCP"| Packs
 ```
 
-The launcher never passes the provider key or approval HMAC keyring to the UI. It generates a fresh
+The launcher never passes the provider key or approval private keyring to the UI. It generates a fresh
 Gateway bearer, approval token, instance identity, and loopback port for every launch. The UI sends no
 bearer or customer bytes until the same origin returns that exact identity. The bundled Gateway and UI
 are one supervised failure domain.
@@ -184,10 +184,10 @@ flowchart TB
   and a first-class contested/resolved projection are not implemented. The UI must preserve both
   claims and present resolution as an operator task rather than silently selecting one.
 - The event store is encrypted with one non-synchronizing, device-bound Keychain key. Imported visual evidence has explicit retention boundaries. Per-engagement key shredding and plaintext-to-encrypted database migration are not implemented yet and remain deployment work.
-- Approved context-pack HMAC keys use a Keychain keyring. Rotation marks one key active and retains
-  older keys for compatibility, but every holder of an HMAC secret is technically signing-capable.
-  The current MCP therefore fails closed without explicitly provisioned key material but is not yet a
-  cryptographically verification-only consumer. Asymmetric signatures are a release requirement.
+- Approved context packs use Ed25519. Keychain retains one active private seed; rotation deletes the
+  former seed and retains only its public key for compatibility. The launcher publishes a versioned
+  non-secret public keyring in Application Support, so the standalone MCP is cryptographically
+  verification-only. Revocation removes a key from subsequently published verification state.
 - Codex access is stdio-only. No HTTP MCP listener exists, and every approved read revalidates the
   Gateway approval binding.
 

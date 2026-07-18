@@ -7,40 +7,7 @@ struct ScoutControllerBar: View {
 
     var body: some View {
         ScoutGlassGroup(spacing: 8) {
-            HStack(spacing: 8) {
-                brand
-                divider
-
-                Button {
-                    controller.toggleSidebar()
-                } label: {
-                    Image(systemName: "sidebar.leading")
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(
-                    controller.isSidebarVisible
-                        ? ScoutColors.primaryText
-                        : ScoutColors.secondaryText
-                )
-                .help(controller.isSidebarVisible ? "Hide session sidebar" : "Show session sidebar")
-                .accessibilityIdentifier("scout.controller.sidebar")
-
-                Button {
-                    controller.toggleInspector()
-                } label: {
-                    Image(systemName: "sidebar.trailing")
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(
-                    controller.isInspectorVisible
-                        ? ScoutColors.primaryText
-                        : ScoutColors.secondaryText
-                )
-                .help(controller.isInspectorVisible ? "Hide evidence inspector" : "Show evidence inspector")
-                .accessibilityIdentifier("scout.controller.inspector")
-
+            HStack(spacing: 6) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 5) {
                         ForEach(controller.openTabs) { tab in
@@ -58,88 +25,42 @@ struct ScoutControllerBar: View {
                         }
                     }
                 }
-                .frame(maxWidth: 520, alignment: .leading)
+                .frame(maxWidth: 620, alignment: .leading)
 
-                surfaceMenu
+                if !closedSurfaces.isEmpty {
+                    surfaceMenu
+                }
 
                 if !controller.minimizedTabs.isEmpty {
                     minimizedTabs
                 }
 
-                Spacer(minLength: 12)
+                Spacer(minLength: 8)
 
-                liveState
-
-                Button {
-                    controller.isCommandPalettePresented.toggle()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "command")
-                        Text("Control")
-                        Text("K")
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundStyle(ScoutColors.secondaryText)
-                    }
-                    .font(.system(size: 11, weight: .semibold))
-                    .padding(.horizontal, 10)
-                    .frame(height: 30)
-                    .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut("k", modifiers: [.command])
-                .help("Open Scout Controller")
-                .accessibilityIdentifier("scout.controller.palette")
-
-                Button {
-                    controller.openWindow(.controlCenter)
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(ScoutColors.primaryText)
-                .help("Open Scout Controller window")
-                .accessibilityIdentifier("scout.controller.window")
+                ControllerIconButton(
+                    symbol: "sidebar.trailing",
+                    help: controller.isInspectorVisible ? "Hide inspector" : "Show inspector",
+                    isActive: controller.isInspectorVisible,
+                    action: controller.toggleInspector
+                )
+                .accessibilityIdentifier("scout.controller.inspector")
 
                 windowMenu
             }
-            .padding(.horizontal, 9)
-            .frame(height: 44)
-            .scoutChrome(cornerRadius: 14)
+            .padding(.horizontal, 8)
+            .frame(height: 40)
+            .scoutChrome(cornerRadius: 13)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
         .padding(.top, 8)
-        .padding(.bottom, 6)
+        .padding(.bottom, 4)
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityIdentifier("scout.controller.bar")
     }
 
-    private var brand: some View {
-        HStack(spacing: 8) {
-            ScoutBrandMark(size: 28)
-            VStack(alignment: .leading, spacing: 0) {
-                Text("SCOUT")
-                    .font(.system(size: 11, weight: .heavy))
-                    .tracking(1.2)
-                Text("Controller")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(ScoutColors.secondaryText)
-            }
-        }
-        .foregroundStyle(ScoutColors.primaryText)
-        .padding(.trailing, 2)
-    }
-
-    private var divider: some View {
-        Rectangle()
-            .fill(ScoutColors.strokeStrong)
-            .frame(width: 1, height: 22)
-            .accessibilityHidden(true)
-    }
-
     private var surfaceMenu: some View {
         Menu {
-            ForEach(ScoutSurface.allCases) { surface in
+            ForEach(closedSurfaces) { surface in
                 Button {
                     controller.open(surface)
                     workspace.destination = surface.destination
@@ -151,12 +72,17 @@ struct ScoutControllerBar: View {
             Image(systemName: "plus")
                 .font(.system(size: 10, weight: .bold))
                 .frame(width: 27, height: 27)
-                .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Open workspace tab")
         .accessibilityIdentifier("scout.controller.newTab")
+    }
+
+    private var closedSurfaces: [ScoutSurface] {
+        ScoutSurface.allCases.filter { surface in
+            !controller.tabs.contains(where: { $0.surface == surface })
+        }
     }
 
     private var minimizedTabs: some View {
@@ -179,22 +105,23 @@ struct ScoutControllerBar: View {
         .help("Restore minimized tabs")
     }
 
-    private var liveState: some View {
-        HStack(spacing: 6) {
-            StatusDot(
-                color: workspace.captureState == .listening ? ScoutColors.mint : ScoutColors.gold,
-                pulses: workspace.captureState == .listening
-            )
-            Text(workspace.captureState.label)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(ScoutColors.secondaryText)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
     private var windowMenu: some View {
         Menu {
+            Section("Layout") {
+                Button(controller.isSidebarVisible ? "Hide Sessions" : "Show Sessions", systemImage: "sidebar.leading") {
+                    controller.toggleSidebar()
+                }
+                Button(controller.isInspectorVisible ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.trailing") {
+                    controller.toggleInspector()
+                }
+            }
+            Divider()
             Section("Scout windows") {
+                Button {
+                    controller.openWindow(.controlCenter)
+                } label: {
+                    Label("Controller", systemImage: "slider.horizontal.3")
+                }
                 ForEach(ScoutWindowRole.allCases.filter { $0 != .workspace }) { role in
                     Button {
                         controller.openWindow(role)
@@ -219,6 +146,27 @@ struct ScoutControllerBar: View {
         .help("Window actions")
         .accessibilityIdentifier("scout.controller.windowMenu")
     }
+
+}
+
+private struct ControllerIconButton: View {
+    let symbol: String
+    let help: String
+    var isActive = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isActive ? ScoutColors.primaryText : ScoutColors.secondaryText)
+        .help(help)
+        .accessibilityLabel(help)
+    }
 }
 
 private struct ScoutTabButton: View {
@@ -233,7 +181,7 @@ private struct ScoutTabButton: View {
     var body: some View {
         HStack(spacing: 6) {
             Button(action: select) {
-                Label(tab.title, systemImage: tab.symbol)
+                Text(tab.title)
                     .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
                     .lineLimit(1)
             }
@@ -252,9 +200,9 @@ private struct ScoutTabButton: View {
             }
         }
         .foregroundStyle(isSelected ? ScoutColors.primaryText : ScoutColors.secondaryText)
-        .padding(.leading, 9)
+        .padding(.leading, 10)
         .padding(.trailing, isSelected || isHovering ? 5 : 9)
-        .frame(height: 29)
+        .frame(height: 28)
         .background(
             isSelected ? ScoutColors.porcelain.opacity(0.10) : Color.clear,
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)

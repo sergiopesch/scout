@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createPrivateKey, createPublicKey } from "node:crypto";
 import test from "node:test";
 import {
   buildAppEnvironment,
@@ -8,13 +9,26 @@ import {
 } from "./run-scout-lib.mjs";
 
 test("launch credentials are fresh, ephemeral, and keep provider secrets out of Scout.app", () => {
+  const approvalPrivateKey = Buffer.alloc(32, 5).toString("base64url");
+  const privateKey = createPrivateKey({
+    key: Buffer.concat([
+      Buffer.from("302e020100300506032b657004220420", "hex"),
+      Buffer.from(approvalPrivateKey, "base64url"),
+    ]),
+    format: "der",
+    type: "pkcs8",
+  });
+  const approvalPublicKey = createPublicKey(privateKey).export({ format: "der", type: "spki" })
+    .subarray(-32).toString("base64url");
   const secrets = {
     openAIAPIKey: "test-openai-api-key-that-is-not-real",
-    approvalKey: "test-approval-key-that-is-at-least-thirty-two-characters",
+    approvalPrivateKey,
     approvalKeyID: "scout-test-v1",
     verificationKeys: {
-      "scout-test-v0": "old-test-approval-key-that-is-at-least-thirty-two-characters",
+      "scout-test-v1": approvalPublicKey,
+      "scout-test-v0": Buffer.alloc(32, 6).toString("base64url"),
     },
+    revokedKeyIDs: [],
   };
   const first = createLaunchCredentials(secrets);
   const second = createLaunchCredentials(secrets);
@@ -25,7 +39,7 @@ test("launch credentials are fresh, ephemeral, and keep provider secrets out of 
   assert.notEqual(first.approvalToken, second.approvalToken);
   assert.notEqual(first.instanceID, second.instanceID);
   assert.equal(first.gatewayEnvironment.OPENAI_API_KEY, secrets.openAIAPIKey);
-  assert.equal(first.gatewayEnvironment.SCOUT_APPROVAL_HMAC_KEY, secrets.approvalKey);
+  assert.equal(first.gatewayEnvironment.SCOUT_APPROVAL_ED25519_PRIVATE_KEY, secrets.approvalPrivateKey);
 
   const gatewayEnvironment = buildGatewayEnvironment({
     parentEnvironment: {
@@ -64,12 +78,20 @@ test("launch credentials are fresh, ephemeral, and keep provider secrets out of 
   assert.equal(appEnvironment.OPENAI_API_KEY, undefined);
   assert.equal(appEnvironment.OPENAI_BASE_URL, undefined);
   assert.equal(appEnvironment.NODE_OPTIONS, undefined);
-  assert.equal(appEnvironment.SCOUT_APPROVAL_HMAC_KEY, undefined);
-  assert.equal(appEnvironment.SCOUT_APPROVAL_VERIFICATION_KEYS, undefined);
+  assert.equal(appEnvironment.SCOUT_APPROVAL_ED25519_PRIVATE_KEY, undefined);
+  assert.equal(appEnvironment.SCOUT_APPROVAL_PUBLIC_KEYS, undefined);
 });
 
 test("launch credential creation rejects malformed Keychain output", () => {
   assert.throws(() => createLaunchCredentials({}), /invalid secret contract/);
+  const rawKey = Buffer.alloc(32, 5).toString("base64url");
+  assert.throws(() => createLaunchCredentials({
+    openAIAPIKey: "test-openai-api-key-that-is-not-real",
+    approvalPrivateKey: rawKey,
+    approvalKeyID: "scout-test-v1",
+    verificationKeys: { "scout-test-v1": rawKey, "scout-test-revoked": rawKey },
+    revokedKeyIDs: ["scout-test-revoked"],
+  }), /invalid secret contract/);
 });
 
 test("Gateway readiness parser accepts only the supervised child event", () => {

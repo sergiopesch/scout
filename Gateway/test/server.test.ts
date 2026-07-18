@@ -28,6 +28,25 @@ function withoutJPEGMetadata(bytes: Buffer): Buffer {
   return Buffer.concat(parts);
 }
 
+function canonicalWAV(frameCount = 24): Buffer {
+  const pcm = Buffer.alloc(frameCount * 2);
+  const wav = Buffer.alloc(44 + pcm.length);
+  wav.write("RIFF", 0, "ascii");
+  wav.writeUInt32LE(wav.length - 8, 4);
+  wav.write("WAVEfmt ", 8, "ascii");
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(24_000, 24);
+  wav.writeUInt32LE(48_000, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36, "ascii");
+  wav.writeUInt32LE(pcm.length, 40);
+  pcm.copy(wav, 44);
+  return wav;
+}
+
 test("Gateway serves bounded REST, authenticated approval, and no ambient HTTP MCP", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "scout-gateway-server-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
@@ -48,9 +67,9 @@ test("Gateway serves bounded REST, authenticated approval, and no ambient HTTP M
     ingestToken: token,
     gatewayInstanceID,
     approvalToken,
-    approvalKey: TEST_APPROVAL_OPTIONS.key,
-    approvalKeyID: TEST_APPROVAL_OPTIONS.keyID,
-    approvalVerificationKeys: {},
+    approvalPrivateKey: TEST_APPROVAL_OPTIONS.signingKey?.privateKey,
+    approvalKeyID: TEST_APPROVAL_OPTIONS.signingKey!.keyID,
+    approvalPublicKeys: TEST_APPROVAL_OPTIONS.verificationKeys,
     requestTimeoutMs: 1_000,
   };
   const store = new ContextPackStore(directory, TEST_APPROVAL_OPTIONS);
@@ -107,7 +126,7 @@ test("Gateway serves bounded REST, authenticated approval, and no ambient HTTP M
   assert.deepEqual(await claims.json(), { accepted_boundary: 7 });
 
   const form = new FormData();
-  form.set("file", new Blob([Buffer.from("RIFF-test")], { type: "audio/wav" }), "meeting.wav");
+  form.set("file", new Blob([canonicalWAV()], { type: "audio/wav" }), "meeting.wav");
   form.set("language", "en");
   const diarization = await fetch(`${base}/v1/transcriptions/diarize`, {
     method: "POST",

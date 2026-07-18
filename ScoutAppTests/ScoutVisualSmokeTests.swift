@@ -229,18 +229,18 @@ private struct ScoutAuditInspector: View {
     @Bindable var workspace: ScoutWorkspace
 
     var body: some View {
-        if workspace.destination == .discovery {
-            VStack(spacing: 10) {
-                TrustInspectorView(workspace: workspace, compact: false)
-                    .frame(minHeight: 300, maxHeight: .infinity)
-                ProactiveQuestionsView(workspace: workspace)
-                    .frame(minHeight: 240, maxHeight: .infinity)
-                QuickWinsSummaryView(workspace: workspace)
-                    .frame(minHeight: 120, idealHeight: 140)
+        VStack(spacing: 8) {
+            Picker("Inspector section", selection: .constant("Evidence")) {
+                Text("Evidence").tag("Evidence")
+                Text("Gaps").tag("Gaps")
             }
-            .padding(10)
-        } else {
-            TrustInspectorView(workspace: workspace, compact: false)
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            TrustInspectorView(workspace: workspace, compact: true)
+                .frame(maxHeight: .infinity)
         }
+        .padding(12)
+        .tint(ScoutColors.mint)
     }
 }
