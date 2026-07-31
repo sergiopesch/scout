@@ -26,8 +26,24 @@ jobs:
           node-version: "24.14.0"
           cache: npm
           cache-dependency-path: Gateway/package-lock.json
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install pinned XcodeGen
+        shell: bash
+        env:
+          XCODEGEN_VERSION: "2.45.4"
+          XCODEGEN_SHA256: 090ec29491aad50aec10631bf6e62253fed733c50f3aab0f5ffc86bc170bdbef
+        run: |
+          set -euo pipefail
+          xcodegen_version="$(tr -d '\r\n' < .xcodegen-version)"
+          test "$xcodegen_version" = "$XCODEGEN_VERSION"
+          xcodegen_archive="$RUNNER_TEMP/xcodegen-${XCODEGEN_VERSION}.zip"
+          xcodegen_root="$RUNNER_TEMP/xcodegen-${XCODEGEN_VERSION}"
+          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 \
+            --output "$xcodegen_archive" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+          printf '%s  %s\n' "$XCODEGEN_SHA256" "$xcodegen_archive" | shasum -a 256 --check
+          ditto -x -k "$xcodegen_archive" "$xcodegen_root"
+          lipo "$xcodegen_root/xcodegen/bin/xcodegen" -verify_arch arm64
+          echo "$xcodegen_root/xcodegen/bin" >> "$GITHUB_PATH"
       - name: Verify pinned XcodeGen
         run: |
           test "$(xcodegen --version)" = "Version: $(tr -d '\n' < .xcodegen-version)"
