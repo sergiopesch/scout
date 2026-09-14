@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:4aa2de1d-5ece-4e39-982c-1a1a6fd71b37",
+  "serialNumber": "urn:uuid:297496b0-8c53-447d-975f-c98a3c3695a1",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-26T07:44:26.191Z",
+    "timestamp": "2026-09-14T12:49:20.117Z",
     "lifecycles": [
       {
         "phase": "build"
@@ -15,7 +15,7 @@
       {
         "vendor": "npm",
         "name": "cli",
-        "version": "11.17.0"
+        "version": "11.19.0"
       }
     ],
     "component": {
@@ -213,48 +213,6 @@
         {
           "license": {
             "id": "MIT"
-          }
-        }
-      ]
-    },
-    {
-      "bom-ref": "fast-uri@3.1.5",
-      "type": "library",
-      "name": "fast-uri",
-      "version": "3.1.5",
-      "scope": "required",
-      "author": "Vincent Le Goff <vince.legoff@gmail.com> (https://github.com/zekth)",
-      "description": "Dependency-free RFC 3986 URI toolbox",
-      "purl": "pkg:npm/fast-uri@3.1.5",
-      "properties": [],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz"
-        },
-        {
-          "type": "vcs",
-          "url": "git+https://github.com/fastify/fast-uri.git"
-        },
-        {
-          "type": "website",
-          "url": "https://github.com/fastify/fast-uri"
-        },
-        {
-          "type": "issue-tracker",
-          "url": "https://github.com/fastify/fast-uri/issues"
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "807c00d4ef4b0c870aba730a84e6d2fc78a6c2d7a13b59cf50408a02ee53a4a81a3b5f5f716125e1b96259ed635b1545bc85f3b498e34382fc5d0d4453d7fb27"
-        }
-      ],
-      "licenses": [
-        {
-          "license": {
-            "id": "BSD-3-Clause"
           }
         }
       ]
@@ -1277,6 +1235,48 @@
       ]
     },
     {
+      "bom-ref": "fast-uri@3.1.7",
+      "type": "library",
+      "name": "fast-uri",
+      "version": "3.1.7",
+      "scope": "required",
+      "author": "Vincent Le Goff <vince.legoff@gmail.com> (https://github.com/zekth)",
+      "description": "Dependency-free RFC 3986 URI toolbox",
+      "purl": "pkg:npm/fast-uri@3.1.7",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/fastify/fast-uri.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/fastify/fast-uri"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/fastify/fast-uri/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "74ebd95738dd65dcfba6177dbfa8c26f0c6b056ddf2ba9fc45cd02b5d98ce1bba6ccc9f1cb005886ea61e89f35f51470fe4bbeacb6de9707ccba792dbb35551e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ]
+    },
+    {
       "bom-ref": "finalhandler@2.1.1",
       "type": "library",
       "name": "finalhandler",
@@ -1618,19 +1618,19 @@
       ]
     },
     {
-      "bom-ref": "hono@4.12.34",
+      "bom-ref": "hono@4.13.7",
       "type": "library",
       "name": "hono",
-      "version": "4.12.34",
+      "version": "4.13.7",
       "scope": "required",
       "author": "Yusuke Wada <yusuke@kamawada.com> (https://github.com/yusukebe)",
       "description": "Web framework built on Web Standards",
-      "purl": "pkg:npm/hono@4.12.34",
+      "purl": "pkg:npm/hono@4.13.7",
       "properties": [],
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/hono/-/hono-4.12.34.tgz"
+          "url": "https://registry.npmjs.org/hono/-/hono-4.13.7.tgz"
         },
         {
           "type": "vcs",
@@ -1644,7 +1644,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "1aa5c9a98ff1264266ba5a13ae75756445c6ddfaad7be563914aa844d65772b52276250e3f87cc4881c7638b6ca9904afbe915c969adfc001f494bb2e7bfde48"
+          "content": "73cfe017d69cf18efcfda804c55a1cc8b7af811f89969341e38e0fcb41525fca49a0f75851f53345c5ed604606c2dea5d7da8895564f37931fb30f6315286641"
         }
       ],
       "licenses": [
@@ -2515,18 +2515,18 @@
       ]
     },
     {
-      "bom-ref": "qs@6.15.3",
+      "bom-ref": "qs@6.16.0",
       "type": "library",
       "name": "qs",
-      "version": "6.15.3",
+      "version": "6.16.0",
       "scope": "required",
       "description": "A querystring parser that supports nesting and arrays, with a depth limit",
-      "purl": "pkg:npm/qs@6.15.3",
+      "purl": "pkg:npm/qs@6.16.0",
       "properties": [],
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/qs/-/qs-6.15.3.tgz"
+          "url": "https://registry.npmjs.org/qs/-/qs-6.16.0.tgz"
         },
         {
           "type": "vcs",
@@ -2540,7 +2540,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "3bd825df30a5e61e5b970d4a194cd02a1039a145d297caf0508339a344b79c25cc9624afcb90f3c7bfc325c23e4b08080aff889de499c21061d684b210703bd4"
+          "content": "87a7e1388691ac80f609b118d9faacfbbb7e517668f8c2c09d4e60448abce6e16d76250f09db00a4c947857a202953381ccd8355b22318d4d3607d8e7263f5bc"
         }
       ],
       "licenses": [
@@ -3427,7 +3427,7 @@
     {
       "ref": "@hono/node-server@2.0.12",
       "dependsOn": [
-        "hono@4.12.34"
+        "hono@4.13.7"
       ]
     },
     {
@@ -3443,7 +3443,7 @@
         "eventsource-parser@3.1.0",
         "express@5.2.1",
         "express-rate-limit@8.5.2",
-        "hono@4.12.34",
+        "hono@4.13.7",
         "jose@6.2.3",
         "json-schema-typed@8.0.2",
         "pkce-challenge@5.0.1",
@@ -3463,7 +3463,7 @@
       "ref": "ajv@8.20.0",
       "dependsOn": [
         "fast-deep-equal@3.1.3",
-        "fast-uri@3.1.5",
+        "fast-uri@3.1.7",
         "json-schema-traverse@1.0.0",
         "require-from-string@2.0.2"
       ]
@@ -3475,10 +3475,6 @@
       ]
     },
     {
-      "ref": "fast-uri@3.1.5",
-      "dependsOn": []
-    },
-    {
       "ref": "body-parser@2.3.0",
       "dependsOn": [
         "bytes@3.1.2",
@@ -3487,7 +3483,7 @@
         "http-errors@2.0.1",
         "iconv-lite@0.7.3",
         "on-finished@2.4.1",
-        "qs@6.15.3",
+        "qs@6.16.0",
         "raw-body@3.0.2",
         "type-is@2.1.0"
       ]
@@ -3636,7 +3632,7 @@
         "once@1.4.0",
         "parseurl@1.3.3",
         "proxy-addr@2.0.7",
-        "qs@6.15.3",
+        "qs@6.16.0",
         "range-parser@1.3.0",
         "router@2.2.0",
         "send@1.2.1",
@@ -3659,6 +3655,10 @@
     },
     {
       "ref": "fast-deep-equal@3.1.3",
+      "dependsOn": []
+    },
+    {
+      "ref": "fast-uri@3.1.7",
       "dependsOn": []
     },
     {
@@ -3721,7 +3721,7 @@
       ]
     },
     {
-      "ref": "hono@4.12.34",
+      "ref": "hono@4.13.7",
       "dependsOn": []
     },
     {
@@ -3849,7 +3849,7 @@
       ]
     },
     {
-      "ref": "qs@6.15.3",
+      "ref": "qs@6.16.0",
       "dependsOn": [
         "es-define-property@1.0.1",
         "side-channel@1.1.1"
